@@ -1,0 +1,38 @@
+/**:
+  ros__parameters:
+    # Device
+    device_serial: ""
+
+    # Output mode: rgbd | rgb+depth | ir | depth_only | color_only | all
+    output_mode: "rgbd"
+
+    # Color stream
+    color:
+      width: 1280
+      height: 720
+      fps: 30
+
+    # Depth stream
+    depth:
+      width: 640
+      height: 480
+      fps: 30
+
+    # IR stream (debug modes only)
+    ir:
+      width: 640
+      height: 480
+      fps: 30
+
+    # Point cloud
+    point_cloud:
+      enabled: false
+      color: true
+
+    # Synchronization
+    sync_mode: "strict"
+    frame_queue_size: 4
+
+    # TF
+    tf_prefix: ""
+    publish_tf: true

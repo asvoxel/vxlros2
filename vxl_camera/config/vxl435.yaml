@@ -1,0 +1,18 @@
+/**:
+  ros__parameters:
+    output_mode: "rgbd"
+
+    color:
+      width: 1280
+      height: 720
+      fps: 30
+
+    depth:
+      width: 640
+      height: 480
+      fps: 30
+
+    sync_mode: "strict"
+    point_cloud:
+      enabled: false
+      color: true
