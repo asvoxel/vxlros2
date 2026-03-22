@@ -1,41 +1,39 @@
-# Prerequisites
-*.d
+# Build
+build/
+install/
+log/
 
-# Compiled Object files
-*.slo
-*.lo
+# Compiled objects
 *.o
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
 *.so
 *.dylib
 *.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
 *.a
 *.lib
-
-# Executables
 *.exe
 *.out
 *.app
 
-# debug information files
-*.dwo
+# SDK binaries (keep .gitkeep and README)
+vxlsense-sdk/include/
+vxlsense-sdk/lib/
+vxlsense-sdk/VERSION
+vxlsense-sdk/CHANGELOG.md
+vxlsense-sdk/docs/
+!vxlsense-sdk/.gitkeep
+!vxlsense-sdk/README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc

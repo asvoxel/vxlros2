@@ -1,0 +1,4 @@
+---
+vxl_camera_msgs/DeviceInfo device_info
+bool success
+string message
