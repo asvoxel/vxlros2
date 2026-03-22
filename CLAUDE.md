@@ -39,6 +39,12 @@ VxlROS2/
 4. **参数系统**: 通过 ROS2 动态参数暴露 VxlSense 选项，支持运行时调整
 5. **资源释放顺序**: Stream → Sensor → Device → Context，严格遵守
 
+## 版本管理
+
+- **仓库**: https://github.com/asvoxel/vxlros2
+- **版本格式**: vX.Y.Z (语义化版本)
+- **打标签规则**: 除非用户明确指定完整版本号，否则只递增最后一位 patch 版本（如 v0.1.0 → v0.1.1 → v0.1.2）
+
 ## 构建与测试
 
 ```bash
