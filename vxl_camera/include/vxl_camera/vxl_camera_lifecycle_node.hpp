@@ -20,8 +20,9 @@
 #include <vxl_camera_msgs/srv/get_int32.hpp>
 #include <vxl_camera_msgs/srv/set_int32.hpp>
 
-#include "vxl_camera/stream_manager.hpp"
+#include "vxl_camera/camera_backend.hpp"
 #include "vxl_camera/point_cloud_generator.hpp"
+#include "vxl_camera/frame_utils.hpp"
 
 #include <vxl.hpp>
 
@@ -55,9 +56,9 @@ public:
     rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
   using State = rclcpp_lifecycle::State;
 
-  enum class OutputMode { RGBD, RGBDepth, IR, DepthOnly, ColorOnly, All };
-
   explicit VxlCameraLifecycleNode(const rclcpp::NodeOptions & options);
+  // Test-friendly constructor: inject a mock or alternate backend.
+  VxlCameraLifecycleNode(const rclcpp::NodeOptions & options, CameraBackendPtr backend);
   ~VxlCameraLifecycleNode() override;
 
   // Lifecycle transitions
@@ -72,7 +73,6 @@ private:
   // Setup
   void declareParameters();
   void declareDynamicOptions();
-  OutputMode parseOutputMode(const std::string & s) const;
   void initDevice();
   void buildPublishers();
   void buildServices();
@@ -83,23 +83,21 @@ private:
   void shutdownDevice();
 
   // Frame processing
-  void framesetCallback(vxl::FrameSetPtr frameset);
-  void publishRGBD(const vxl::FramePtr & color, const vxl::FramePtr & depth);
+  void framesetCallback(BackendFrameSetPtr frameset);
+  void publishRGBD(const BackendFramePtr & color, const BackendFramePtr & depth);
   void publishImage(
     const image_transport::CameraPublisher & pub,
-    const vxl::FramePtr & frame,
+    const BackendFramePtr & frame,
     const std::string & frame_id,
     const sensor_msgs::msg::CameraInfo::SharedPtr & info);
   void publishMetadata(
     const std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<vxl_camera_msgs::msg::Metadata>> & pub,
-    const vxl::FramePtr & frame,
+    const BackendFramePtr & frame,
     const std::string & frame_id);
 
   // Helpers
   sensor_msgs::msg::Image::SharedPtr frameToImageMsg(
-    const vxl::FramePtr & frame, const std::string & frame_id) const;
-  sensor_msgs::msg::CameraInfo::SharedPtr buildCameraInfo(
-    const vxl::Intrinsics & intrin, const std::string & frame_id) const;
+    const BackendFramePtr & frame, const std::string & frame_id) const;
 
   // Hotplug
   void onDeviceEvent(const vxl::DeviceInfo & info, bool added);
@@ -127,10 +125,8 @@ private:
   // Diagnostics
   void diagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper & stat);
 
-  // SDK objects
-  vxl::ContextPtr context_;
-  vxl::DevicePtr device_;
-  std::unique_ptr<StreamManager> stream_manager_;
+  // Backend abstraction (real SDK or mock for tests)
+  CameraBackendPtr backend_;
   std::unique_ptr<PointCloudGenerator> pc_generator_;
 
   // Configuration

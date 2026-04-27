@@ -19,8 +19,9 @@
 #include <vxl_camera_msgs/srv/get_int32.hpp>
 #include <vxl_camera_msgs/srv/set_int32.hpp>
 
-#include "vxl_camera/stream_manager.hpp"
+#include "vxl_camera/camera_backend.hpp"
 #include "vxl_camera/point_cloud_generator.hpp"
+#include "vxl_camera/frame_utils.hpp"
 
 #include <vxl.hpp>
 
@@ -35,24 +36,16 @@ namespace vxl_camera
 class VxlCameraNode : public rclcpp::Node
 {
 public:
+  // Default constructor uses the real SDK backend.
   explicit VxlCameraNode(const rclcpp::NodeOptions & options);
+  // Test-friendly constructor: inject a mock or alternate backend.
+  VxlCameraNode(const rclcpp::NodeOptions & options, CameraBackendPtr backend);
   ~VxlCameraNode() override;
 
 private:
-  // Output modes
-  enum class OutputMode {
-    RGBD,        // Default: single synced RGBD topic
-    RGBDepth,    // Separate color + depth topics
-    IR,          // Debug: IR only
-    DepthOnly,   // Debug: depth only
-    ColorOnly,   // Debug: color only
-    All          // Debug: all streams
-  };
-
   // Initialization
   void declareParameters();
   void declareDynamicOptions();
-  OutputMode parseOutputMode(const std::string & mode_str) const;
   void initDevice();
   void setupPublishers();
   void setupServices();
@@ -61,15 +54,15 @@ private:
   void shutdownDevice();
 
   // Frame processing
-  void framesetCallback(vxl::FrameSetPtr frameset);
-  void publishRGBD(const vxl::FramePtr & color, const vxl::FramePtr & depth);
-  void publishColor(const vxl::FramePtr & frame);
-  void publishDepth(const vxl::FramePtr & frame);
-  void publishIR(const vxl::FramePtr & frame);
-  void publishPointCloud(const vxl::FramePtr & depth, const vxl::FramePtr & color);
+  void framesetCallback(BackendFrameSetPtr frameset);
+  void publishRGBD(const BackendFramePtr & color, const BackendFramePtr & depth);
+  void publishColor(const BackendFramePtr & frame);
+  void publishDepth(const BackendFramePtr & frame);
+  void publishIR(const BackendFramePtr & frame);
+  void publishPointCloud(const BackendFramePtr & depth, const BackendFramePtr & color);
   void publishMetadata(
     const rclcpp::Publisher<vxl_camera_msgs::msg::Metadata>::SharedPtr & pub,
-    const vxl::FramePtr & frame,
+    const BackendFramePtr & frame,
     const std::string & frame_id);
 
   // Diagnostics
@@ -77,10 +70,7 @@ private:
 
   // Helpers
   sensor_msgs::msg::Image::SharedPtr frameToImageMsg(
-    const vxl::FramePtr & frame,
-    const std::string & frame_id) const;
-  sensor_msgs::msg::CameraInfo::SharedPtr buildCameraInfo(
-    const vxl::Intrinsics & intrin,
+    const BackendFramePtr & frame,
     const std::string & frame_id) const;
   void publishStaticTFs();
 
@@ -102,10 +92,8 @@ private:
   rcl_interfaces::msg::SetParametersResult onParameterChange(
     const std::vector<rclcpp::Parameter> & params);
 
-  // VxlSense objects
-  vxl::ContextPtr context_;
-  vxl::DevicePtr device_;
-  std::unique_ptr<StreamManager> stream_manager_;
+  // Backend abstraction (real SDK or mock for tests)
+  CameraBackendPtr backend_;
   std::unique_ptr<PointCloudGenerator> pc_generator_;
 
   // Configuration

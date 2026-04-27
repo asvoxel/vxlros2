@@ -1,5 +1,6 @@
 #include "vxl_camera/vxl_camera_node.hpp"
 #include "vxl_camera/sensor_options.hpp"
+#include "vxl_camera/frame_utils.hpp"
 
 #include <cv_bridge/cv_bridge.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -12,8 +13,15 @@ namespace vxl_camera
 {
 
 VxlCameraNode::VxlCameraNode(const rclcpp::NodeOptions & options)
-: rclcpp::Node("vxl_camera", options)
+: VxlCameraNode(options, makeSdkCameraBackend())
 {
+}
+
+VxlCameraNode::VxlCameraNode(const rclcpp::NodeOptions & options, CameraBackendPtr backend)
+: rclcpp::Node("vxl_camera", options),
+  backend_(std::move(backend))
+{
+  if (!backend_) {throw std::runtime_error("CameraBackend must not be null");}
   try {
     declareParameters();
     initDevice();
@@ -80,30 +88,31 @@ void VxlCameraNode::declareParameters()
   declare_parameter("publish_tf", true);
 
   // Read config
-  output_mode_ = parseOutputMode(get_parameter("output_mode").as_string());
+  std::string mode_str = get_parameter("output_mode").as_string();
+  auto mode = parseOutputMode(mode_str);
+  if (!mode) {
+    RCLCPP_WARN(get_logger(), "Unknown output_mode '%s', defaulting to 'rgbd'",
+      mode_str.c_str());
+    output_mode_ = OutputMode::RGBD;
+  } else {
+    output_mode_ = *mode;
+  }
   tf_prefix_ = get_parameter("tf_prefix").as_string();
   publish_tf_ = get_parameter("publish_tf").as_bool();
 }
 
 void VxlCameraNode::declareDynamicOptions()
 {
-  // Declare ROS2 parameters for SDK options that the connected device supports.
-  // Each declared parameter gets its initial value from the device, so reading
-  // it via `ros2 param get` returns the live setting.
+  // Declare ROS2 parameters for SDK options that the backend reports as supported.
+  // Initial value reads the live setting from the backend.
   for (const auto & [name, binding] : dynamicOptionTable()) {
+    if (!backend_->isOptionSupported(binding.sensor, binding.option)) {continue;}
     try {
-      auto sensor = device_->getSensor(binding.sensor);
-      if (!sensor || !sensor->isOptionSupported(binding.option)) {
-        continue;
-      }
-
-      auto range = sensor->getOptionRange(binding.option);
-      float current = sensor->getOption(binding.option);
+      auto range = backend_->getOptionRange(binding.sensor, binding.option);
+      float current = backend_->getOption(binding.sensor, binding.option);
 
       rcl_interfaces::msg::ParameterDescriptor desc;
       desc.description = std::string(vxl_option_string(binding.option));
-
-      // Constrain via integer_range so `ros2 param describe` shows the bounds.
       rcl_interfaces::msg::IntegerRange irange;
       irange.from_value = static_cast<int64_t>(range.min);
       irange.to_value = static_cast<int64_t>(range.max);
@@ -111,7 +120,7 @@ void VxlCameraNode::declareDynamicOptions()
       desc.integer_range.push_back(irange);
 
       declare_parameter<int>(name, static_cast<int>(current), desc);
-    } catch (const vxl::Error & e) {
+    } catch (const std::exception & e) {
       RCLCPP_DEBUG(get_logger(), "Skipping option '%s': %s", name.c_str(), e.what());
     }
   }
@@ -121,62 +130,29 @@ void VxlCameraNode::declareDynamicOptions()
     std::bind(&VxlCameraNode::onParameterChange, this, std::placeholders::_1));
 }
 
-VxlCameraNode::OutputMode VxlCameraNode::parseOutputMode(
-  const std::string & mode_str) const
-{
-  if (mode_str == "rgbd") {return OutputMode::RGBD;}
-  if (mode_str == "rgb+depth") {return OutputMode::RGBDepth;}
-  if (mode_str == "ir") {return OutputMode::IR;}
-  if (mode_str == "depth_only") {return OutputMode::DepthOnly;}
-  if (mode_str == "color_only") {return OutputMode::ColorOnly;}
-  if (mode_str == "all") {return OutputMode::All;}
-
-  RCLCPP_WARN(get_logger(), "Unknown output_mode '%s', defaulting to 'rgbd'",
-    mode_str.c_str());
-  return OutputMode::RGBD;
-}
-
 void VxlCameraNode::initDevice()
 {
-  context_ = vxl::Context::create();
-
   std::string serial = get_parameter("device_serial").as_string();
-
-  if (serial.empty()) {
-    size_t count = context_->deviceCount();
-    if (count == 0) {
-      throw std::runtime_error("No VxlSense device found");
-    }
-    device_ = context_->getDevice(0);
-    RCLCPP_INFO(get_logger(), "Auto-selected first device");
-  } else {
-    device_ = context_->findDeviceBySerial(serial);
-    if (!device_) {
-      throw std::runtime_error("Device not found: " + serial);
-    }
+  if (!backend_->open(serial)) {
+    throw std::runtime_error(
+      serial.empty() ? "No VxlSense device found" : "Device not found: " + serial);
   }
 
-  device_->open();
-
-  auto info = device_->getInfo();
+  auto info = backend_->getDeviceInfo();
   RCLCPP_INFO(get_logger(), "Device: %s (S/N: %s, FW: %s)",
     info.name.c_str(), info.serial_number.c_str(), info.fw_version.c_str());
 
-  // Build camera info from intrinsics
-  try {
-    auto color_intrin = device_->getIntrinsics(vxl::SensorType::Color);
-    std::string color_frame = tf_prefix_ + "vxl_color_optical_frame";
-    color_camera_info_ = buildCameraInfo(color_intrin, color_frame);
-  } catch (const vxl::Error & e) {
-    RCLCPP_WARN(get_logger(), "Failed to get color intrinsics: %s", e.what());
+  if (auto ci = backend_->getIntrinsics(vxl::SensorType::Color)) {
+    color_camera_info_ = std::make_shared<sensor_msgs::msg::CameraInfo>(
+      buildCameraInfo(*ci, tf_prefix_ + "vxl_color_optical_frame"));
+  } else {
+    RCLCPP_WARN(get_logger(), "Color intrinsics unavailable");
   }
-
-  try {
-    auto depth_intrin = device_->getIntrinsics(vxl::SensorType::Depth);
-    std::string depth_frame = tf_prefix_ + "vxl_depth_optical_frame";
-    depth_camera_info_ = buildCameraInfo(depth_intrin, depth_frame);
-  } catch (const vxl::Error & e) {
-    RCLCPP_WARN(get_logger(), "Failed to get depth intrinsics: %s", e.what());
+  if (auto di = backend_->getIntrinsics(vxl::SensorType::Depth)) {
+    depth_camera_info_ = std::make_shared<sensor_msgs::msg::CameraInfo>(
+      buildCameraInfo(*di, tf_prefix_ + "vxl_depth_optical_frame"));
+  } else {
+    RCLCPP_WARN(get_logger(), "Depth intrinsics unavailable");
   }
 }
 
@@ -255,18 +231,15 @@ void VxlCameraNode::setupPublishers()
     "~/extrinsics/depth_to_color", rclcpp::QoS(1).transient_local());
 
   // Publish extrinsics once (latched)
-  try {
-    auto ext = device_->getExtrinsics(vxl::SensorType::Depth, vxl::SensorType::Color);
+  if (auto ext = backend_->getExtrinsics(vxl::SensorType::Depth, vxl::SensorType::Color)) {
     auto msg = vxl_camera_msgs::msg::Extrinsics();
-    for (int i = 0; i < 9; i++) {
-      msg.rotation[i] = static_cast<double>(ext.rotation[i]);
-    }
+    for (int i = 0; i < 9; i++) {msg.rotation[i] = static_cast<double>(ext->rotation[i]);}
     for (int i = 0; i < 3; i++) {
-      msg.translation[i] = static_cast<double>(ext.translation[i]) / 1000.0;  // mm->m
+      msg.translation[i] = static_cast<double>(ext->translation[i]) / 1000.0;  // mm→m
     }
     extrinsics_pub_->publish(msg);
-  } catch (const vxl::Error & e) {
-    RCLCPP_WARN(get_logger(), "Failed to get extrinsics: %s", e.what());
+  } else {
+    RCLCPP_WARN(get_logger(), "Extrinsics unavailable");
   }
 }
 
@@ -297,13 +270,11 @@ void VxlCameraNode::setupDiagnostics()
 {
   diag_updater_ = std::make_shared<diagnostic_updater::Updater>(this);
 
-  std::string hw_id;
+  std::string hw_id = "vxl_camera";
   try {
-    auto info = device_->getInfo();
+    auto info = backend_->getDeviceInfo();
     hw_id = info.name + ":" + info.serial_number;
-  } catch (const std::exception &) {
-    hw_id = "vxl_camera";
-  }
+  } catch (const std::exception &) {}
   diag_updater_->setHardwareID(hw_id);
 
   diag_updater_->add("vxl_camera",
@@ -359,12 +330,12 @@ void VxlCameraNode::diagnosticsCallback(diagnostic_updater::DiagnosticStatusWrap
 
   // Device info
   try {
-    auto info = device_->getInfo();
+    auto info = backend_->getDeviceInfo();
     stat.add("device.name", info.name);
     stat.add("device.serial", info.serial_number);
     stat.add("device.firmware", info.fw_version);
-    stat.add("device.connected", device_->isOpen());
-    if (!device_->isOpen()) {
+    stat.add("device.connected", backend_->isOpen());
+    if (!backend_->isOpen()) {
       stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "Device disconnected");
     }
   } catch (const std::exception & e) {
@@ -377,70 +348,52 @@ void VxlCameraNode::diagnosticsCallback(diagnostic_updater::DiagnosticStatusWrap
 
 void VxlCameraNode::startStreaming()
 {
-  StreamParams params;
-  params.color_width = get_parameter("color.width").as_int();
-  params.color_height = get_parameter("color.height").as_int();
-  params.color_fps = get_parameter("color.fps").as_int();
-  params.depth_width = get_parameter("depth.width").as_int();
-  params.depth_height = get_parameter("depth.height").as_int();
-  params.depth_fps = get_parameter("depth.fps").as_int();
-  params.ir_width = get_parameter("ir.width").as_int();
-  params.ir_height = get_parameter("ir.height").as_int();
-  params.ir_fps = get_parameter("ir.fps").as_int();
-  params.sync_mode = get_parameter("sync_mode").as_string();
-  params.frame_queue_size = get_parameter("frame_queue_size").as_int();
+  BackendStreamConfig config;
+  config.color_width = get_parameter("color.width").as_int();
+  config.color_height = get_parameter("color.height").as_int();
+  config.color_fps = get_parameter("color.fps").as_int();
+  config.depth_width = get_parameter("depth.width").as_int();
+  config.depth_height = get_parameter("depth.height").as_int();
+  config.depth_fps = get_parameter("depth.fps").as_int();
+  config.ir_width = get_parameter("ir.width").as_int();
+  config.ir_height = get_parameter("ir.height").as_int();
+  config.ir_fps = get_parameter("ir.fps").as_int();
+  config.sync_mode = get_parameter("sync_mode").as_string();
+  config.frame_queue_size = get_parameter("frame_queue_size").as_int();
 
-  stream_manager_ = std::make_unique<StreamManager>(device_, params);
-
-  // Enable streams based on output mode
   switch (output_mode_) {
     case OutputMode::RGBD:
     case OutputMode::RGBDepth:
-      stream_manager_->enableColor();
-      stream_manager_->enableDepth();
-      break;
-    case OutputMode::ColorOnly:
-      stream_manager_->enableColor();
-      break;
-    case OutputMode::DepthOnly:
-      stream_manager_->enableDepth();
-      break;
-    case OutputMode::IR:
-      stream_manager_->enableIR();
-      break;
+      config.color_enabled = true; config.depth_enabled = true; break;
+    case OutputMode::ColorOnly: config.color_enabled = true; break;
+    case OutputMode::DepthOnly: config.depth_enabled = true; break;
+    case OutputMode::IR:        config.ir_enabled = true; break;
     case OutputMode::All:
-      stream_manager_->enableColor();
-      stream_manager_->enableDepth();
-      stream_manager_->enableIR();
-      break;
+      config.color_enabled = true; config.depth_enabled = true; config.ir_enabled = true; break;
   }
 
-  stream_manager_->start(
+  backend_->startStreaming(
+    config,
     std::bind(&VxlCameraNode::framesetCallback, this, std::placeholders::_1));
 }
 
 void VxlCameraNode::shutdownDevice()
 {
-  if (stream_manager_) {
-    stream_manager_->stop();
-    stream_manager_.reset();
+  if (backend_) {
+    backend_->stopStreaming();
+    backend_->close();
   }
-  if (device_ && device_->isOpen()) {
-    device_->close();
-  }
-  device_.reset();
-  context_.reset();
 }
 
-void VxlCameraNode::framesetCallback(vxl::FrameSetPtr frameset)
+void VxlCameraNode::framesetCallback(BackendFrameSetPtr frameset)
 {
   if (!frameset || frameset->empty()) {
     return;
   }
 
-  auto color_frame = frameset->getColorFrame();
-  auto depth_frame = frameset->getDepthFrame();
-  auto ir_frame = frameset->getIRFrame();
+  auto color_frame = frameset->color;
+  auto depth_frame = frameset->depth;
+  auto ir_frame = frameset->ir;
 
   switch (output_mode_) {
     case OutputMode::RGBD:
@@ -489,26 +442,25 @@ void VxlCameraNode::framesetCallback(vxl::FrameSetPtr frameset)
 
 void VxlCameraNode::publishMetadata(
   const rclcpp::Publisher<vxl_camera_msgs::msg::Metadata>::SharedPtr & pub,
-  const vxl::FramePtr & frame,
+  const BackendFramePtr & frame,
   const std::string & frame_id)
 {
   if (!pub || !frame || !frame->isValid()) {
     return;
   }
-  auto meta = frame->metadata();
   vxl_camera_msgs::msg::Metadata msg;
   msg.header.stamp = now();
   msg.header.frame_id = frame_id;
-  msg.timestamp_us = meta.timestamp_us;
-  msg.frame_number = meta.sequence;
-  msg.exposure_us = meta.exposure_us;
-  msg.gain = meta.gain;
+  msg.timestamp_us = frame->timestamp_us;
+  msg.frame_number = frame->sequence;
+  msg.exposure_us = frame->exposure_us;
+  msg.gain = frame->gain;
   pub->publish(msg);
 }
 
 void VxlCameraNode::publishRGBD(
-  const vxl::FramePtr & color,
-  const vxl::FramePtr & depth)
+  const BackendFramePtr & color,
+  const BackendFramePtr & depth)
 {
   auto msg = vxl_camera_msgs::msg::RGBD();
   msg.header.stamp = now();
@@ -531,7 +483,7 @@ void VxlCameraNode::publishRGBD(
   rgbd_pub_->publish(msg);
 }
 
-void VxlCameraNode::publishColor(const vxl::FramePtr & frame)
+void VxlCameraNode::publishColor(const BackendFramePtr & frame)
 {
   auto img = frameToImageMsg(frame, tf_prefix_ + "vxl_color_optical_frame");
   if (!img) {return;}
@@ -543,7 +495,7 @@ void VxlCameraNode::publishColor(const vxl::FramePtr & frame)
   color_pub_.publish(*img, *info);
 }
 
-void VxlCameraNode::publishDepth(const vxl::FramePtr & frame)
+void VxlCameraNode::publishDepth(const BackendFramePtr & frame)
 {
   auto img = frameToImageMsg(frame, tf_prefix_ + "vxl_depth_optical_frame");
   if (!img) {return;}
@@ -555,7 +507,7 @@ void VxlCameraNode::publishDepth(const vxl::FramePtr & frame)
   depth_pub_.publish(*img, *info);
 }
 
-void VxlCameraNode::publishIR(const vxl::FramePtr & frame)
+void VxlCameraNode::publishIR(const BackendFramePtr & frame)
 {
   auto img = frameToImageMsg(frame, tf_prefix_ + "vxl_ir_optical_frame");
   if (!img) {return;}
@@ -566,8 +518,8 @@ void VxlCameraNode::publishIR(const vxl::FramePtr & frame)
 }
 
 void VxlCameraNode::publishPointCloud(
-  const vxl::FramePtr & depth,
-  const vxl::FramePtr & color)
+  const BackendFramePtr & depth,
+  const BackendFramePtr & color)
 {
   if (!pc_generator_) {return;}
 
@@ -586,93 +538,33 @@ void VxlCameraNode::publishPointCloud(
 }
 
 sensor_msgs::msg::Image::SharedPtr VxlCameraNode::frameToImageMsg(
-  const vxl::FramePtr & frame,
+  const BackendFramePtr & frame,
   const std::string & frame_id) const
 {
   if (!frame || !frame->isValid()) {
     return nullptr;
   }
 
+  auto encoding = vxlFormatToRosEncoding(frame->format);
+  if (!encoding) {
+    // The SDK backend already handles MJPEG/H264 decoding internally; if we
+    // still see an unmappable format here, there's no further conversion path.
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+      "Unsupported frame format: %d (no further conversion attempted)",
+      static_cast<int>(frame->format));
+    return nullptr;
+  }
+
   auto msg = std::make_shared<sensor_msgs::msg::Image>();
   msg->header.stamp = now();
   msg->header.frame_id = frame_id;
-  msg->width = frame->width();
-  msg->height = frame->height();
-  msg->step = frame->stride();
+  msg->width = frame->width;
+  msg->height = frame->height;
+  msg->step = frame->stride;
   msg->is_bigendian = false;
-
-  auto fmt = frame->format();
-  switch (fmt) {
-    case vxl::Format::BGR:
-      msg->encoding = "bgr8";
-      break;
-    case vxl::Format::RGB:
-      msg->encoding = "rgb8";
-      break;
-    case vxl::Format::Z16:
-      msg->encoding = "16UC1";
-      break;
-    case vxl::Format::Gray8:
-      msg->encoding = "mono8";
-      break;
-    case vxl::Format::Gray16:
-      msg->encoding = "mono16";
-      break;
-    default:
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-        "Unsupported frame format: %d, attempting conversion to BGR",
-        static_cast<int>(fmt));
-      try {
-        auto converted = frame->convert(vxl::Format::BGR);
-        return frameToImageMsg(converted, frame_id);
-      } catch (const vxl::Error & e) {
-        RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
-          "Frame conversion failed: %s", e.what());
-        return nullptr;
-      }
-  }
-
-  size_t data_size = frame->dataSize();
-  msg->data.resize(data_size);
-  std::memcpy(msg->data.data(), frame->data(), data_size);
-
+  msg->encoding = *encoding;
+  msg->data = frame->data;  // copy
   return msg;
-}
-
-sensor_msgs::msg::CameraInfo::SharedPtr VxlCameraNode::buildCameraInfo(
-  const vxl::Intrinsics & intrin,
-  const std::string & frame_id) const
-{
-  auto info = std::make_shared<sensor_msgs::msg::CameraInfo>();
-  info->header.frame_id = frame_id;
-  info->width = intrin.width;
-  info->height = intrin.height;
-  info->distortion_model = "plumb_bob";
-
-  // D: [k1, k2, p1, p2, k3]
-  info->d.resize(5);
-  for (int i = 0; i < 5; i++) {
-    info->d[i] = intrin.coeffs[i];
-  }
-
-  // K: [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-  info->k = {
-    static_cast<double>(intrin.fx), 0.0, static_cast<double>(intrin.cx),
-    0.0, static_cast<double>(intrin.fy), static_cast<double>(intrin.cy),
-    0.0, 0.0, 1.0
-  };
-
-  // R: identity
-  info->r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
-
-  // P: [fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0]
-  info->p = {
-    static_cast<double>(intrin.fx), 0.0, static_cast<double>(intrin.cx), 0.0,
-    0.0, static_cast<double>(intrin.fy), static_cast<double>(intrin.cy), 0.0,
-    0.0, 0.0, 1.0, 0.0
-  };
-
-  return info;
 }
 
 void VxlCameraNode::publishStaticTFs()
@@ -706,14 +598,11 @@ void VxlCameraNode::publishStaticTFs()
   transforms.push_back(make_tf(tf_prefix_ + "vxl_ir_optical_frame"));
 
   // Apply extrinsics offset to depth/ir frames if available
-  try {
-    auto ext = device_->getExtrinsics(vxl::SensorType::Color, vxl::SensorType::Depth);
+  if (auto ext = backend_->getExtrinsics(vxl::SensorType::Color, vxl::SensorType::Depth)) {
     auto & depth_tf = transforms[1];
-    depth_tf.transform.translation.x = ext.translation[0] / 1000.0;
-    depth_tf.transform.translation.y = ext.translation[1] / 1000.0;
-    depth_tf.transform.translation.z = ext.translation[2] / 1000.0;
-  } catch (const vxl::Error &) {
-    // Use zero offset if extrinsics unavailable
+    depth_tf.transform.translation.x = ext->translation[0] / 1000.0;
+    depth_tf.transform.translation.y = ext->translation[1] / 1000.0;
+    depth_tf.transform.translation.z = ext->translation[2] / 1000.0;
   }
 
   tf_static_broadcaster_->sendTransform(transforms);
@@ -725,7 +614,7 @@ void VxlCameraNode::onGetDeviceInfo(
   vxl_camera_msgs::srv::GetDeviceInfo::Response::SharedPtr res)
 {
   try {
-    auto info = device_->getInfo();
+    auto info = backend_->getDeviceInfo();
     res->device_info.name = info.name;
     res->device_info.serial_number = info.serial_number;
     res->device_info.firmware_version = info.fw_version;
@@ -745,24 +634,15 @@ void VxlCameraNode::onGetOption(
   try {
     int option_id = std::stoi(req->option_name);
     auto option = static_cast<vxl_option_t>(option_id);
-
-    // Determine which sensor owns this option by range
-    auto sensor_type = (option_id >= 100) ?
-      vxl::SensorType::Depth : vxl::SensorType::Color;
-    auto sensor = device_->getSensor(sensor_type);
-
-    if (!sensor->isOptionSupported(option)) {
+    // Option ID range partitions sensor: <100 = color, >=100 = depth.
+    auto sensor_type = (option_id >= 100) ? vxl::SensorType::Depth : vxl::SensorType::Color;
+    if (!backend_->isOptionSupported(sensor_type, option)) {
       res->success = false;
       res->message = "Option " + req->option_name + " not supported";
       return;
     }
-
-    float value = sensor->getOption(option);
-    res->value = static_cast<int32_t>(value);
+    res->value = static_cast<int32_t>(backend_->getOption(sensor_type, option));
     res->success = true;
-  } catch (const vxl::Error & e) {
-    res->success = false;
-    res->message = e.what();
   } catch (const std::exception & e) {
     res->success = false;
     res->message = e.what();
@@ -776,22 +656,14 @@ void VxlCameraNode::onSetOption(
   try {
     int option_id = std::stoi(req->option_name);
     auto option = static_cast<vxl_option_t>(option_id);
-
-    auto sensor_type = (option_id >= 100) ?
-      vxl::SensorType::Depth : vxl::SensorType::Color;
-    auto sensor = device_->getSensor(sensor_type);
-
-    if (!sensor->isOptionSupported(option)) {
+    auto sensor_type = (option_id >= 100) ? vxl::SensorType::Depth : vxl::SensorType::Color;
+    if (!backend_->isOptionSupported(sensor_type, option)) {
       res->success = false;
       res->message = "Option " + req->option_name + " not supported";
       return;
     }
-
-    sensor->setOption(option, static_cast<float>(req->value));
+    backend_->setOption(sensor_type, option, static_cast<float>(req->value));
     res->success = true;
-  } catch (const vxl::Error & e) {
-    res->success = false;
-    res->message = e.what();
   } catch (const std::exception & e) {
     res->success = false;
     res->message = e.what();
@@ -803,7 +675,7 @@ void VxlCameraNode::onHwReset(
   std_srvs::srv::Trigger::Response::SharedPtr res)
 {
   try {
-    device_->hwReset();
+    backend_->hwReset();
     res->success = true;
     res->message = "Hardware reset triggered";
   } catch (const std::exception & e) {
@@ -835,20 +707,15 @@ rcl_interfaces::msg::SetParametersResult VxlCameraNode::onParameterChange(
     auto it = table.find(name);
     if (it != table.end()) {
       try {
-        auto sensor = device_->getSensor(it->second.sensor);
-        if (!sensor) {
-          result.successful = false;
-          result.reason = "Sensor unavailable for parameter '" + name + "'";
-          return result;
-        }
-        if (!sensor->isOptionSupported(it->second.option)) {
+        if (!backend_->isOptionSupported(it->second.sensor, it->second.option)) {
           result.successful = false;
           result.reason = "Option not supported by device: " + name;
           return result;
         }
-        sensor->setOption(it->second.option, static_cast<float>(param.as_int()));
+        backend_->setOption(it->second.sensor, it->second.option,
+          static_cast<float>(param.as_int()));
         RCLCPP_INFO(get_logger(), "Set %s = %ld", name.c_str(), param.as_int());
-      } catch (const vxl::Error & e) {
+      } catch (const std::exception & e) {
         result.successful = false;
         result.reason = std::string("SDK error setting ") + name + ": " + e.what();
         RCLCPP_ERROR(get_logger(), "%s", result.reason.c_str());

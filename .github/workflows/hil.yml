@@ -1,0 +1,88 @@
+name: Hardware-in-the-Loop
+
+# Runs the integration test suite against a real VxlSense camera attached to a
+# self-hosted runner. The runner must be labeled `vxl-hardware` and have:
+#   - ROS 2 Humble installed at /opt/ros/humble
+#   - The udev rule from scripts/99-vxl-cameras.rules
+#   - A VxlSense camera plugged in
+#   - Network access to GitHub for repo checkout
+#
+# See docs/HIL_SETUP.md for runner registration instructions.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      output_mode:
+        description: 'Camera output mode to test (rgbd, rgb+depth, ir, all)'
+        required: true
+        default: 'rgbd'
+  # Don't run HiL on PRs from forks — they shouldn't trigger jobs against
+  # private hardware. Manual dispatch + main-branch pushes only.
+
+concurrency:
+  group: hil-${{ github.ref }}
+  cancel-in-progress: false  # don't cancel running hardware jobs mid-stream
+
+jobs:
+  hardware-test:
+    name: Integration test on real device
+    runs-on: [self-hosted, vxl-hardware]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src/vxlros2
+
+      - name: Pre-flight check (camera enumeration)
+        run: |
+          # Fail fast if no device is reachable.
+          set -e
+          lsusb | grep -i -E "vxl|asvoxel" || {
+            echo "::error::No VxlSense USB device detected on this runner";
+            exit 1;
+          }
+
+      - name: Resolve VxlSDK install
+        run: |
+          # Self-hosted runner pre-installs the SDK at /opt/vxlsdk/current.
+          # Fall back to building if not present.
+          if [ -d /opt/vxlsdk/current/include ]; then
+            echo "VXL_SDK_DIR=/opt/vxlsdk/current" >> $GITHUB_ENV
+          else
+            echo "::warning::Pre-installed SDK not found at /opt/vxlsdk/current — building from source"
+            git clone --depth 1 https://github.com/asvoxel/vxlsdk vxlsdk-src
+            (cd vxlsdk-src && ./scripts/release-linux.sh)
+            echo "VXL_SDK_DIR=$PWD/vxlsdk-src/sdk/current" >> $GITHUB_ENV
+          fi
+
+      - name: Build packages
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --packages-select vxl_camera_msgs vxl_camera vxl_description \
+            --cmake-args "-DVXL_SDK_DIR=$VXL_SDK_DIR"
+
+      - name: Run integration test (output_mode=${{ github.event.inputs.output_mode || 'rgbd' }})
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          colcon test --packages-select vxl_camera \
+            --event-handlers console_direct+ \
+            --pytest-args -k test_integration \
+            -- --launch-args output_mode:=${{ github.event.inputs.output_mode || 'rgbd' }}
+
+      - name: Test summary
+        if: always()
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon test-result --all --verbose
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hil-logs-${{ github.run_id }}
+          path: |
+            log/
+            build/vxl_camera/test_results/

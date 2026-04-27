@@ -95,9 +95,9 @@ message(STATUS "VXL library:     ${VXL_LIBRARY}")
 set(NODE_SOURCES
   src/vxl_camera_node.cpp
   src/vxl_camera_lifecycle_node.cpp
+  src/sdk_camera_backend.cpp
   src/sensor_options.cpp
   src/frame_utils.cpp
-  src/stream_manager.cpp
   src/point_cloud_generator.cpp
 )
 
@@ -194,6 +194,16 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_sensor_options test/test_sensor_options.cpp)
   target_link_libraries(test_sensor_options vxl_camera_component)
+
+  ament_add_gtest(test_node_with_mock test/test_node_with_mock.cpp)
+  target_link_libraries(test_node_with_mock vxl_camera_component)
+  ament_target_dependencies(test_node_with_mock
+    rclcpp std_srvs vxl_camera_msgs)
+
+  ament_add_gtest(test_lifecycle_with_mock test/test_lifecycle_with_mock.cpp)
+  target_link_libraries(test_lifecycle_with_mock vxl_camera_component)
+  ament_target_dependencies(test_lifecycle_with_mock
+    rclcpp rclcpp_lifecycle lifecycle_msgs std_srvs vxl_camera_msgs)
 endif()
 
 ament_package()
