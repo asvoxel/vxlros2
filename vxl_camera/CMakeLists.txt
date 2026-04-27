@@ -191,6 +191,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_frame_utils test/test_frame_utils.cpp)
   target_link_libraries(test_frame_utils vxl_camera_component)
   ament_target_dependencies(test_frame_utils sensor_msgs)
+
+  ament_add_gtest(test_sensor_options test/test_sensor_options.cpp)
+  target_link_libraries(test_sensor_options vxl_camera_component)
 endif()
 
 ament_package()
