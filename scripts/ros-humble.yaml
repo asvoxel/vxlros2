@@ -1,0 +1,45 @@
+# Lima VM template for ROS 2 Humble development on Apple Silicon.
+# Usage:
+#   limactl create --name=ros-humble scripts/ros-humble.yaml
+#   limactl start ros-humble
+#   limactl shell ros-humble
+#   # Then run scripts/install_ros2_humble.sh inside the VM.
+#
+# After ROS is installed, the project is at /Users/xbits/Workspace/asVoxel/vxlros2
+# inside the VM (Lima auto-mounts the host home dir).
+
+minimumLimaVersion: 2.0.0
+
+# Use Ubuntu 22.04 — the only distro that ships ROS 2 Humble apt packages.
+base:
+- template:_images/ubuntu-22.04
+
+# Apple Virtualization framework: native ARM64, fast startup, no QEMU emulation.
+vmType: vz
+
+# Resource budget for ROS2 dev (colcon build of vxl_camera + tests).
+cpus: 4
+memory: 6GiB
+disk: 40GiB
+
+# Mounts:
+# - ~ (host home) auto-mounted read-only by default
+# - ~/Workspace writable so we can build/test from inside the VM
+mounts:
+- location: "~"
+- location: "~/Workspace"
+  writable: true
+
+# Faster file I/O than the default reverse-sshfs on Apple Silicon.
+mountType: virtiofs
+
+# Use SSH agent forwarding so git operations from inside VM work seamlessly.
+ssh:
+  forwardAgent: true
+
+# Don't propagate host proxy env vars into the VM. Many Mac users run a local
+# proxy (Clash/V2Ray) bound to 127.0.0.1; Lima rewrites it to 192.168.5.2:<port>
+# on the guest side, which breaks because those proxies typically only listen
+# on the loopback interface. apt and curl in the VM can reach the public mirrors
+# directly anyway. If you DO need a proxy in the VM, configure it explicitly.
+propagateProxyEnv: false
