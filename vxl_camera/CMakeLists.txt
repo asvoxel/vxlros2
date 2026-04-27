@@ -96,6 +96,7 @@ set(NODE_SOURCES
   src/vxl_camera_node.cpp
   src/vxl_camera_lifecycle_node.cpp
   src/sensor_options.cpp
+  src/frame_utils.cpp
   src/stream_manager.cpp
   src/point_cloud_generator.cpp
 )
@@ -186,6 +187,10 @@ if(BUILD_TESTING)
   ament_add_gtest(test_point_cloud test/test_point_cloud.cpp)
   target_link_libraries(test_point_cloud vxl_camera_component)
   ament_target_dependencies(test_point_cloud rclcpp sensor_msgs)
+
+  ament_add_gtest(test_frame_utils test/test_frame_utils.cpp)
+  target_link_libraries(test_frame_utils vxl_camera_component)
+  ament_target_dependencies(test_frame_utils sensor_msgs)
 endif()
 
 ament_package()
