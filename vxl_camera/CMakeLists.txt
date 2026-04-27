@@ -204,6 +204,25 @@ if(BUILD_TESTING)
   target_link_libraries(test_lifecycle_with_mock vxl_camera_component)
   ament_target_dependencies(test_lifecycle_with_mock
     rclcpp rclcpp_lifecycle lifecycle_msgs std_srvs vxl_camera_msgs)
+
+  ament_add_gtest(test_sdk_camera_backend test/test_sdk_camera_backend.cpp)
+  target_link_libraries(test_sdk_camera_backend vxl_camera_component)
+
+  # ─── Mock-driven launch test for lifecycle node ─────────────────────────
+  # Builds a test-only executable that wires VxlCameraLifecycleNode to a
+  # MockCameraBackend + a synthetic frame source. Used by test_lifecycle_launch.py
+  # to exercise the full ROS2 launch path end-to-end without hardware.
+  add_executable(vxl_camera_lifecycle_mock test/mock_lifecycle_main.cpp)
+  target_link_libraries(vxl_camera_lifecycle_mock vxl_camera_component)
+  ament_target_dependencies(vxl_camera_lifecycle_mock
+    rclcpp rclcpp_lifecycle lifecycle_msgs)
+  install(TARGETS vxl_camera_lifecycle_mock
+    DESTINATION lib/${PROJECT_NAME})
+
+  find_package(launch_testing_ament_cmake REQUIRED)
+  add_launch_test(test/test_lifecycle_launch.py
+    TIMEOUT 60
+    TARGET test_lifecycle_launch)
 endif()
 
 ament_package()
