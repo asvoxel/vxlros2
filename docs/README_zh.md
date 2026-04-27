@@ -32,10 +32,19 @@ sudo apt install \
 
 ### 安装 VxlSense SDK
 
-将 SDK 发行包解压到项目目录：
+**方式一 — 从同级 `vxlsdk` 源码项目编译（开发推荐）：**
 
 ```bash
-cd VxlROS2/vxlsense-sdk/
+# 目录布局：asVoxel/{vxlros2, vxlsdk}/   （vxlsdk 与 vxlros2 同级）
+cd ../vxlsdk
+./scripts/release-linux.sh    # 或 release-macos.sh
+# 输出：vxlsdk/sdk/current/  （符号链接，vxlros2 CMake 自动识别）
+```
+
+**方式二 — 解压 SDK 发行包：**
+
+```bash
+cd VxlROS2/vxlsdk/
 wget https://github.com/asvoxel/VxlSense/releases/download/vX.Y.Z/asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz
 tar xzf asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz --strip-components=1
 
@@ -45,7 +54,7 @@ ls include/vxl.hpp lib/linux/libasvxl.a
 
 解压后目录结构：
 ```
-vxlsense-sdk/
+vxlsdk/
 ├── include/          # C/C++ API 头文件
 │   ├── vxl.h
 │   ├── vxl.hpp
@@ -65,7 +74,6 @@ mkdir -p ~/vxlros2_ws/src && cd ~/vxlros2_ws/src
 ln -s /path/to/VxlROS2/vxl_camera_msgs .
 ln -s /path/to/VxlROS2/vxl_camera .
 ln -s /path/to/VxlROS2/vxl_description .
-ln -s /path/to/VxlROS2/vxlsense-sdk ../vxlsense-sdk
 
 # 编译
 cd ~/vxlros2_ws
@@ -85,7 +93,7 @@ export VXL_SDK_DIR=/opt/vxlsense/sdk
 colcon build
 ```
 
-路径优先级：CMake 参数 > 环境变量 > 项目内 `vxlsense-sdk/`
+路径优先级：CMake 参数 > 环境变量 > 同级 `../vxlsdk/sdk/current/` > 项目内 `vxlsdk/`
 
 ## 使用
 
@@ -181,7 +189,7 @@ ros2 service call /vxl_camera/hw_reset std_srvs/srv/Trigger
 
 ```
 VxlROS2/
-├── vxlsense-sdk/          # VxlSense SDK 发行包
+├── vxlsdk/                # SDK 占位目录（兜底；优先用同级 ../vxlsdk 项目编译产物）
 ├── vxl_camera/             # 主驱动节点
 ├── vxl_camera_msgs/        # 自定义消息与服务
 ├── vxl_description/        # URDF 相机模型
@@ -209,7 +217,10 @@ ros2 launch vxl_camera test/test_integration.launch.py
 CMake Error: VxlSense SDK not found
 ```
 
-解决：将 SDK 解压到 `vxlsense-sdk/` 或通过 `-DVXL_SDK_DIR` 指定路径。
+解决（任一）：
+1. 编译同级 vxlsdk 项目：`cd ../vxlsdk && ./scripts/release-linux.sh`，输出会在 `vxlsdk/sdk/current/` 自动被识别
+2. 解压发行包到 `vxlros2/vxlsdk/`
+3. 通过 `-DVXL_SDK_DIR=/path` 显式指定路径
 
 ### 没有检测到设备
 

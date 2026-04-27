@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & test (${{ matrix.ros_distro }} on ${{ matrix.ubuntu }})
+    runs-on: ${{ matrix.ubuntu }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ros_distro: humble
+            ubuntu: ubuntu-22.04
+          - ros_distro: jazzy
+            ubuntu: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src/vxlros2
+
+      # ── VxlSDK build (cached) ────────────────────────────────────────────
+      - name: Cache VxlSDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: vxlsdk-install
+          # Bump the cache key when the SDK version or build process changes.
+          key: vxlsdk-v1.1.6-${{ matrix.ubuntu }}
+
+      - name: Checkout vxlsdk
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: asvoxel/vxlsdk
+          path: vxlsdk-src
+          # token: ${{ secrets.VXLSDK_TOKEN }}  # uncomment if private
+
+      - name: Build VxlSDK
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libusb-1.0-0-dev cmake build-essential pkg-config
+          cd vxlsdk-src
+          ./scripts/release-linux.sh
+          mkdir -p ../vxlsdk-install
+          cp -r sdk/current/* ../vxlsdk-install/
+
+      # ── ROS2 build & test ────────────────────────────────────────────────
+      - name: Build & test
+        uses: ros-tooling/action-ros-ci@v0.3
+        with:
+          target-ros2-distro: ${{ matrix.ros_distro }}
+          package-name: vxl_camera_msgs vxl_camera vxl_description
+          colcon-defaults: |
+            {
+              "build": {
+                "cmake-args": ["-DVXL_SDK_DIR=${{ github.workspace }}/vxlsdk-install"]
+              }
+            }
+          import-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.ros_distro }}
+          path: ros_ws/log/
+
+  release:
+    name: Release artifacts
+    runs-on: ubuntu-22.04
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package source bundle
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          tar czf vxlros2-${TAG}-source.tar.gz \
+            --exclude='.git' --exclude='vxlsdk' --exclude='build' \
+            --exclude='install' --exclude='log' .
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vxlros2-*.tar.gz
+          generate_release_notes: true

@@ -8,10 +8,14 @@ ROS2 driver for [VxlSense](https://github.com/asvoxel/VxlSense) depth cameras.
 
 - **RGBD output** — Synchronized RGB + Depth in a single topic (default)
 - **RGB+Depth output** — Separate color and depth topics with camera_info
-- **Point cloud** — Optional PointCloud2 generation from depth
-- **Multi-camera** — Multiple cameras with TF prefix isolation
+- **Point cloud** — Async worker pipeline with min/max-z, decimation, organized/dense modes
+- **Per-stream metadata** — `~/<stream>/metadata` with timestamp / sequence / exposure / gain
+- **Dynamic parameters** — Runtime exposure/gain/white-balance/etc. via `ros2 param set`
+- **Lifecycle node** — `VxlCameraLifecycleNode` with USB hotplug auto-recovery
+- **Diagnostics** — `/diagnostics` reports per-stream fps, drops, connection state
+- **Multi-camera** — Per-process or single-container (intra-process zero-copy) launches
 - **ROS2 services** — Device info, option get/set, hardware reset
-- **Component node** — Supports `rclcpp_components` for intra-process zero-copy
+- **Component node** — Both variants registered as `rclcpp_components` plugins
 
 ## Prerequisites
 
@@ -32,8 +36,19 @@ sudo apt install \
 
 ### Install VxlSense SDK
 
+**Option A — Build from sibling `vxlsdk` source (recommended for development):**
+
 ```bash
-cd VxlROS2/vxlsense-sdk/
+# Layout: asVoxel/{vxlros2, vxlsdk}/  (vxlsdk checked out next to vxlros2)
+cd ../vxlsdk
+./scripts/release-linux.sh    # or release-macos.sh
+# Output: vxlsdk/sdk/current/ — auto-detected by vxlros2 CMake
+```
+
+**Option B — Extract a release tarball:**
+
+```bash
+cd VxlROS2/vxlsdk/
 wget https://github.com/asvoxel/VxlSense/releases/download/vX.Y.Z/asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz
 tar xzf asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz --strip-components=1
 
@@ -50,7 +65,6 @@ mkdir -p ~/vxlros2_ws/src && cd ~/vxlros2_ws/src
 ln -s /path/to/VxlROS2/vxl_camera_msgs .
 ln -s /path/to/VxlROS2/vxl_camera .
 ln -s /path/to/VxlROS2/vxl_description .
-ln -s /path/to/VxlROS2/vxlsense-sdk ../vxlsense-sdk
 
 cd ~/vxlros2_ws
 source /opt/ros/humble/setup.bash
@@ -64,7 +78,7 @@ colcon build --packages-select vxl_camera vxl_description && source install/setu
 colcon build --cmake-args -DVXL_SDK_DIR=/opt/vxlsense/sdk
 ```
 
-SDK path priority: CMake arg > `VXL_SDK_DIR` env var > `../vxlsense-sdk/`
+SDK path priority: CMake arg > `VXL_SDK_DIR` env var > sibling `../vxlsdk/sdk/current/` > in-repo `vxlsdk/`
 
 ## Usage
 
@@ -116,10 +130,32 @@ ros2 launch vxl_camera vxl_camera.launch.py \
 
 Topic: `~/depth/points` (`sensor_msgs/PointCloud2`)
 
+### Lifecycle Mode (auto USB hotplug recovery)
+
+```bash
+# Auto-activates by default; survives USB unplug/replug
+ros2 launch vxl_camera vxl_camera_lifecycle.launch.py
+
+# Hand control to an external lifecycle manager (e.g., nav2_lifecycle_manager)
+ros2 launch vxl_camera vxl_camera_lifecycle.launch.py auto_activate:=false
+```
+
+Standard lifecycle services are exposed:
+```bash
+ros2 lifecycle set /vxl_camera deactivate
+ros2 lifecycle set /vxl_camera activate
+ros2 service call /vxl_camera/get_state lifecycle_msgs/srv/GetState
+```
+
 ### Multi-Camera
 
 ```bash
+# Per-process (max isolation, default)
 ros2 launch vxl_camera multi_camera.launch.py \
+  serial_1:=VXL435_001 serial_2:=VXL435_002
+
+# Single process via ComposableNodeContainer (intra-process zero-copy)
+ros2 launch vxl_camera multi_camera_composable.launch.py \
   serial_1:=VXL435_001 serial_2:=VXL435_002
 ```
 
@@ -139,21 +175,38 @@ ros2 service call /vxl_camera/hw_reset std_srvs/srv/Trigger
 
 ## Parameters
 
+### Cold (require restart)
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `output_mode` | `"rgbd"` | Output mode (see above) |
 | `device_serial` | `""` | Device serial number (empty = auto) |
-| `color.width` | `1280` | Color stream width |
-| `color.height` | `720` | Color stream height |
-| `color.fps` | `30` | Color stream framerate |
-| `depth.width` | `640` | Depth stream width |
-| `depth.height` | `480` | Depth stream height |
-| `depth.fps` | `30` | Depth stream framerate |
-| `point_cloud.enabled` | `false` | Enable PointCloud2 |
-| `point_cloud.color` | `true` | Attach RGB to point cloud |
+| `color.width` / `.height` / `.fps` | 1280×720@30 | Color stream config |
+| `depth.width` / `.height` / `.fps` | 640×480@30 | Depth stream config |
+| `ir.width` / `.height` / `.fps` | 640×480@30 | IR stream config |
+| `point_cloud.enabled` | `false` | Enable PointCloud2 generation |
 | `sync_mode` | `"strict"` | Frame sync: strict / approximate / none |
 | `tf_prefix` | `""` | TF frame prefix |
 | `publish_tf` | `true` | Publish static TF frames |
+
+### Hot (settable at runtime via `ros2 param set`)
+
+| Parameter | Description |
+|-----------|-------------|
+| `color.exposure` / `.gain` / `.auto_exposure` | Color sensor exposure controls |
+| `color.brightness` / `.contrast` / `.saturation` / `.sharpness` | Color image |
+| `color.white_balance` / `.auto_white_balance` / `.gamma` / `.hue` | Color WB/tone |
+| `depth.exposure` / `.gain` / `.auto_exposure` | Depth sensor exposure |
+| `depth.min_distance` / `.max_distance` | Depth working range (mm) |
+| `depth.ir_enable` | Toggle IR projector |
+| `point_cloud.color` | Attach RGB to point cloud |
+| `point_cloud.min_z` / `.max_z` | Range filter (meters; 0 = disabled) |
+| `point_cloud.decimation` | Pixel skip (1 = every pixel) |
+| `point_cloud.organized` | true = preserve grid with NaN; false = dense |
+| `auto_recover_on_reconnect` | (lifecycle) re-activate after USB reconnect |
+
+Hot params are auto-discovered from device capability — only those the connected
+device supports are declared. `ros2 param describe <name>` shows the SDK range.
 
 ## TF Frames
 
@@ -168,7 +221,7 @@ ros2 service call /vxl_camera/hw_reset std_srvs/srv/Trigger
 
 ```
 VxlROS2/
-├── vxlsense-sdk/          # VxlSense SDK (extract release here)
+├── vxlsdk/                # SDK placeholder (fallback for release tarball)
 ├── vxl_camera/             # Main driver node
 ├── vxl_camera_msgs/        # Custom messages and services
 ├── vxl_description/        # URDF camera model

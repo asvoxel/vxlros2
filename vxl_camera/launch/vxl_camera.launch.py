@@ -32,12 +32,19 @@ def generate_launch_description():
             default_value='',
             description='TF frame prefix for multi-camera setups'
         ),
+        DeclareLaunchArgument(
+            'log_level',
+            default_value='info',
+            description='ROS2 logger level: debug | info | warn | error | fatal'
+        ),
 
         Node(
             package='vxl_camera',
             executable='vxl_camera_node',
             name='vxl_camera',
             output='screen',
+            arguments=['--ros-args', '--log-level',
+                       ['vxl_camera:=', LaunchConfiguration('log_level')]],
             parameters=[
                 LaunchConfiguration('config_file'),
                 {

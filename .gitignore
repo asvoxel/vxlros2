@@ -16,13 +16,13 @@ log/
 *.app
 
 # SDK binaries (keep .gitkeep and README)
-vxlsense-sdk/include/
-vxlsense-sdk/lib/
-vxlsense-sdk/VERSION
-vxlsense-sdk/CHANGELOG.md
-vxlsense-sdk/docs/
-!vxlsense-sdk/.gitkeep
-!vxlsense-sdk/README.md
+vxlsdk/include/
+vxlsdk/lib/
+vxlsdk/VERSION
+vxlsdk/CHANGELOG.md
+vxlsdk/docs/
+!vxlsdk/.gitkeep
+!vxlsdk/README.md
 
 # IDE
 .vscode/

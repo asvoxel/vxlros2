@@ -1,13 +1,15 @@
 """
 Integration test launch file.
 Starts VxlCameraNode and verifies topics are published.
-Requires a connected VxlSense device.
+Requires a connected VxlSense device — skip locally if absent.
 """
 import os
 import unittest
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_testing.actions import ReadyToTest
 
@@ -15,22 +17,29 @@ import launch_testing
 import rclpy
 from rclpy.node import Node as RclpyNode
 from sensor_msgs.msg import Image
-from vxl_camera_msgs.msg import RGBD
+from vxl_camera_msgs.msg import RGBD, Metadata, Extrinsics
+from diagnostic_msgs.msg import DiagnosticArray
 
 
 def generate_test_description():
     pkg_dir = get_package_share_directory('vxl_camera')
     config = os.path.join(pkg_dir, 'config', 'default.yaml')
 
+    output_mode_arg = DeclareLaunchArgument(
+        'output_mode', default_value='rgbd',
+        description='rgbd | rgb+depth | ir | depth_only | color_only | all'
+    )
+
     camera_node = Node(
         package='vxl_camera',
         executable='vxl_camera_node',
         name='vxl_camera_test',
-        parameters=[config, {'output_mode': 'rgbd'}],
+        parameters=[config, {'output_mode': LaunchConfiguration('output_mode')}],
         output='screen',
     )
 
     return LaunchDescription([
+        output_mode_arg,
         camera_node,
         ReadyToTest(),
     ]), {'camera_node': camera_node}
@@ -49,20 +58,19 @@ class TestVxlCameraIntegration(unittest.TestCase):
         cls.node.destroy_node()
         rclpy.shutdown()
 
+    def _wait_for(self, predicate, timeout_s=10.0):
+        end_time = self.node.get_clock().now() + rclpy.duration.Duration(seconds=timeout_s)
+        while self.node.get_clock().now() < end_time and not predicate():
+            rclpy.spin_once(self.node, timeout_sec=0.5)
+
     def test_rgbd_topic_published(self):
         """Verify RGBD topic is published within 10 seconds."""
         received = []
-
         sub = self.node.create_subscription(
             RGBD, '/vxl_camera_test/rgbd', lambda msg: received.append(msg), 10)
-
-        end_time = self.node.get_clock().now() + rclpy.duration.Duration(seconds=10)
-        while self.node.get_clock().now() < end_time and len(received) == 0:
-            rclpy.spin_once(self.node, timeout_sec=0.5)
-
+        self._wait_for(lambda: len(received) > 0)
         sub  # keep reference
         self.assertGreater(len(received), 0, "No RGBD messages received within 10s")
-
         msg = received[0]
         self.assertGreater(msg.rgb.width, 0)
         self.assertGreater(msg.depth.width, 0)
@@ -71,8 +79,6 @@ class TestVxlCameraIntegration(unittest.TestCase):
 
     def test_extrinsics_published(self):
         """Verify extrinsics topic is published (latched)."""
-        from vxl_camera_msgs.msg import Extrinsics
-
         received = []
         sub = self.node.create_subscription(
             Extrinsics, '/vxl_camera_test/extrinsics/depth_to_color',
@@ -80,12 +86,42 @@ class TestVxlCameraIntegration(unittest.TestCase):
             rclpy.qos.QoSProfile(
                 depth=1,
                 durability=rclpy.qos.DurabilityPolicy.TRANSIENT_LOCAL))
-
-        end_time = self.node.get_clock().now() + rclpy.duration.Duration(seconds=5)
-        while self.node.get_clock().now() < end_time and len(received) == 0:
-            rclpy.spin_once(self.node, timeout_sec=0.5)
-
-        sub  # keep reference
+        self._wait_for(lambda: len(received) > 0, timeout_s=5.0)
+        sub
         self.assertGreater(len(received), 0, "No Extrinsics message received")
         self.assertEqual(len(received[0].rotation), 9)
         self.assertEqual(len(received[0].translation), 3)
+
+    def test_color_metadata_published(self):
+        """Verify per-stream metadata topic carries SDK frame metadata."""
+        received = []
+        sub = self.node.create_subscription(
+            Metadata, '/vxl_camera_test/color/metadata',
+            lambda msg: received.append(msg), 10)
+        self._wait_for(lambda: len(received) > 0)
+        sub
+        self.assertGreater(len(received), 0, "No color/metadata received within 10s")
+        self.assertGreater(received[0].timestamp_us, 0)
+
+    def test_depth_metadata_published(self):
+        received = []
+        sub = self.node.create_subscription(
+            Metadata, '/vxl_camera_test/depth/metadata',
+            lambda msg: received.append(msg), 10)
+        self._wait_for(lambda: len(received) > 0)
+        sub
+        self.assertGreater(len(received), 0, "No depth/metadata received within 10s")
+
+    def test_diagnostics_published(self):
+        """Verify diagnostic_updater publishes /diagnostics with our entry."""
+        received = []
+        sub = self.node.create_subscription(
+            DiagnosticArray, '/diagnostics',
+            lambda msg: received.append(msg), 10)
+        # Updater fires at 1Hz, give it a few cycles
+        self._wait_for(lambda: len(received) >= 2, timeout_s=5.0)
+        sub
+        self.assertGreater(len(received), 0, "No /diagnostics messages received")
+        names = {s.name for arr in received for s in arr.status}
+        self.assertTrue(any("vxl_camera" in n for n in names),
+            f"Expected 'vxl_camera' status; got {names}")

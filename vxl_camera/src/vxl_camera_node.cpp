@@ -1,9 +1,11 @@
 #include "vxl_camera/vxl_camera_node.hpp"
+#include "vxl_camera/sensor_options.hpp"
 
 #include <cv_bridge/cv_bridge.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 
+#include <algorithm>
 #include <chrono>
 
 namespace vxl_camera
@@ -15,8 +17,10 @@ VxlCameraNode::VxlCameraNode(const rclcpp::NodeOptions & options)
   try {
     declareParameters();
     initDevice();
+    declareDynamicOptions();
     setupPublishers();
     setupServices();
+    setupDiagnostics();
 
     if (publish_tf_) {
       publishStaticTFs();
@@ -62,6 +66,10 @@ void VxlCameraNode::declareParameters()
   // Point cloud
   declare_parameter("point_cloud.enabled", false);
   declare_parameter("point_cloud.color", true);
+  declare_parameter("point_cloud.min_z", 0.0);    // meters; 0 = no min limit
+  declare_parameter("point_cloud.max_z", 0.0);    // meters; 0 = no max limit
+  declare_parameter("point_cloud.decimation", 1);  // pixel skip; 1 = every pixel
+  declare_parameter("point_cloud.organized", true);
 
   // Sync
   declare_parameter("sync_mode", "strict");
@@ -75,8 +83,40 @@ void VxlCameraNode::declareParameters()
   output_mode_ = parseOutputMode(get_parameter("output_mode").as_string());
   tf_prefix_ = get_parameter("tf_prefix").as_string();
   publish_tf_ = get_parameter("publish_tf").as_bool();
+}
 
-  // Dynamic parameter callback
+void VxlCameraNode::declareDynamicOptions()
+{
+  // Declare ROS2 parameters for SDK options that the connected device supports.
+  // Each declared parameter gets its initial value from the device, so reading
+  // it via `ros2 param get` returns the live setting.
+  for (const auto & [name, binding] : dynamicOptionTable()) {
+    try {
+      auto sensor = device_->getSensor(binding.sensor);
+      if (!sensor || !sensor->isOptionSupported(binding.option)) {
+        continue;
+      }
+
+      auto range = sensor->getOptionRange(binding.option);
+      float current = sensor->getOption(binding.option);
+
+      rcl_interfaces::msg::ParameterDescriptor desc;
+      desc.description = std::string(vxl_option_string(binding.option));
+
+      // Constrain via integer_range so `ros2 param describe` shows the bounds.
+      rcl_interfaces::msg::IntegerRange irange;
+      irange.from_value = static_cast<int64_t>(range.min);
+      irange.to_value = static_cast<int64_t>(range.max);
+      irange.step = static_cast<uint64_t>(std::max(1.0f, range.step));
+      desc.integer_range.push_back(irange);
+
+      declare_parameter<int>(name, static_cast<int>(current), desc);
+    } catch (const vxl::Error & e) {
+      RCLCPP_DEBUG(get_logger(), "Skipping option '%s': %s", name.c_str(), e.what());
+    }
+  }
+
+  // Register the on-set callback after declarations to avoid firing for initial values.
   param_cb_handle_ = add_on_set_parameters_callback(
     std::bind(&VxlCameraNode::onParameterChange, this, std::placeholders::_1));
 }
@@ -174,6 +214,20 @@ void VxlCameraNode::setupPublishers()
       this, "~/ir/image_raw", qos.get_rmw_qos_profile());
   }
 
+  // Per-stream metadata publishers (timestamp / sequence / exposure / gain)
+  if (need_color) {
+    color_meta_pub_ = create_publisher<vxl_camera_msgs::msg::Metadata>(
+      "~/color/metadata", qos);
+  }
+  if (need_depth) {
+    depth_meta_pub_ = create_publisher<vxl_camera_msgs::msg::Metadata>(
+      "~/depth/metadata", qos);
+  }
+  if (need_ir) {
+    ir_meta_pub_ = create_publisher<vxl_camera_msgs::msg::Metadata>(
+      "~/ir/metadata", qos);
+  }
+
   if (get_parameter("point_cloud.enabled").as_bool() && need_depth) {
     pc_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
       "~/depth/points", qos);
@@ -182,6 +236,19 @@ void VxlCameraNode::setupPublishers()
     if (depth_camera_info_) {
       pc_generator_->configure(*depth_camera_info_, 1.0f);
     }
+
+    PointCloudFilter filter;
+    filter.min_z_m = static_cast<float>(get_parameter("point_cloud.min_z").as_double());
+    filter.max_z_m = static_cast<float>(get_parameter("point_cloud.max_z").as_double());
+    filter.decimation = get_parameter("point_cloud.decimation").as_int();
+    filter.organized = get_parameter("point_cloud.organized").as_bool();
+    pc_generator_->setFilter(filter);
+
+    // Worker thread offloads generate+publish off the SDK polling thread.
+    pc_generator_->startAsync(
+      [this](sensor_msgs::msg::PointCloud2::UniquePtr cloud) {
+        if (pc_pub_) {pc_pub_->publish(std::move(cloud));}
+      });
   }
 
   extrinsics_pub_ = create_publisher<vxl_camera_msgs::msg::Extrinsics>(
@@ -224,6 +291,88 @@ void VxlCameraNode::setupServices()
     "~/hw_reset",
     std::bind(&VxlCameraNode::onHwReset, this,
     std::placeholders::_1, std::placeholders::_2));
+}
+
+void VxlCameraNode::setupDiagnostics()
+{
+  diag_updater_ = std::make_shared<diagnostic_updater::Updater>(this);
+
+  std::string hw_id;
+  try {
+    auto info = device_->getInfo();
+    hw_id = info.name + ":" + info.serial_number;
+  } catch (const std::exception &) {
+    hw_id = "vxl_camera";
+  }
+  diag_updater_->setHardwareID(hw_id);
+
+  diag_updater_->add("vxl_camera",
+    std::bind(&VxlCameraNode::diagnosticsCallback, this, std::placeholders::_1));
+
+  // Trigger updates at 1 Hz; the wrapper handles the actual rate calculations.
+  auto now_tp = std::chrono::steady_clock::now();
+  color_stats_.last_sample_time = now_tp;
+  depth_stats_.last_sample_time = now_tp;
+  ir_stats_.last_sample_time = now_tp;
+
+  diag_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() {
+    diag_updater_->force_update();
+  });
+}
+
+void VxlCameraNode::diagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper & stat)
+{
+  std::lock_guard<std::mutex> lock(stats_mutex_);
+  auto now_tp = std::chrono::steady_clock::now();
+
+  auto report = [&](const char * name, StreamStats & s, int expected_fps) {
+    uint64_t cur = s.frames_published.load();
+    uint64_t prev = s.last_sample_count.load();
+    auto elapsed_s = std::chrono::duration<double>(now_tp - s.last_sample_time).count();
+    double fps = (elapsed_s > 0.001) ? (cur - prev) / elapsed_s : 0.0;
+    s.last_sample_count.store(cur);
+    s.last_sample_time = now_tp;
+
+    stat.add(std::string(name) + ".frames_published", cur);
+    stat.add(std::string(name) + ".fps", fps);
+    stat.add(std::string(name) + ".expected_fps", expected_fps);
+
+    // Flag if the actual rate falls below 50% of the configured rate while streaming.
+    // (Skip the warning during the first sample window where prev == 0.)
+    if (expected_fps > 0 && prev > 0 && fps > 0 && fps < expected_fps * 0.5) {
+      stat.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN,
+        std::string(name) + " fps below 50% of configured rate");
+    }
+  };
+
+  stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Streaming");
+
+  if (color_meta_pub_) {
+    report("color", color_stats_, get_parameter("color.fps").as_int());
+  }
+  if (depth_meta_pub_) {
+    report("depth", depth_stats_, get_parameter("depth.fps").as_int());
+  }
+  if (ir_meta_pub_) {
+    report("ir", ir_stats_, get_parameter("ir.fps").as_int());
+  }
+
+  // Device info
+  try {
+    auto info = device_->getInfo();
+    stat.add("device.name", info.name);
+    stat.add("device.serial", info.serial_number);
+    stat.add("device.firmware", info.fw_version);
+    stat.add("device.connected", device_->isOpen());
+    if (!device_->isOpen()) {
+      stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "Device disconnected");
+    }
+  } catch (const std::exception & e) {
+    stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR,
+      std::string("Device query failed: ") + e.what());
+  }
+
+  stat.add("output_mode", get_parameter("output_mode").as_string());
 }
 
 void VxlCameraNode::startStreaming()
@@ -297,32 +446,64 @@ void VxlCameraNode::framesetCallback(vxl::FrameSetPtr frameset)
     case OutputMode::RGBD:
       if (color_frame && depth_frame) {
         publishRGBD(color_frame, depth_frame);
+        color_stats_.frames_published++;
+        depth_stats_.frames_published++;
       }
       break;
     case OutputMode::RGBDepth:
-      if (color_frame) {publishColor(color_frame);}
-      if (depth_frame) {publishDepth(depth_frame);}
+      if (color_frame) {publishColor(color_frame); color_stats_.frames_published++;}
+      if (depth_frame) {publishDepth(depth_frame); depth_stats_.frames_published++;}
       break;
     case OutputMode::ColorOnly:
-      if (color_frame) {publishColor(color_frame);}
+      if (color_frame) {publishColor(color_frame); color_stats_.frames_published++;}
       break;
     case OutputMode::DepthOnly:
-      if (depth_frame) {publishDepth(depth_frame);}
+      if (depth_frame) {publishDepth(depth_frame); depth_stats_.frames_published++;}
       break;
     case OutputMode::IR:
-      if (ir_frame) {publishIR(ir_frame);}
+      if (ir_frame) {publishIR(ir_frame); ir_stats_.frames_published++;}
       break;
     case OutputMode::All:
-      if (color_frame) {publishColor(color_frame);}
-      if (depth_frame) {publishDepth(depth_frame);}
-      if (ir_frame) {publishIR(ir_frame);}
+      if (color_frame) {publishColor(color_frame); color_stats_.frames_published++;}
+      if (depth_frame) {publishDepth(depth_frame); depth_stats_.frames_published++;}
+      if (ir_frame) {publishIR(ir_frame); ir_stats_.frames_published++;}
       break;
+  }
+
+  // Per-stream metadata
+  if (color_frame) {
+    publishMetadata(color_meta_pub_, color_frame, tf_prefix_ + "vxl_color_optical_frame");
+  }
+  if (depth_frame) {
+    publishMetadata(depth_meta_pub_, depth_frame, tf_prefix_ + "vxl_depth_optical_frame");
+  }
+  if (ir_frame) {
+    publishMetadata(ir_meta_pub_, ir_frame, tf_prefix_ + "vxl_ir_optical_frame");
   }
 
   // Point cloud (if enabled and depth available)
   if (pc_pub_ && depth_frame) {
     publishPointCloud(depth_frame, color_frame);
   }
+}
+
+void VxlCameraNode::publishMetadata(
+  const rclcpp::Publisher<vxl_camera_msgs::msg::Metadata>::SharedPtr & pub,
+  const vxl::FramePtr & frame,
+  const std::string & frame_id)
+{
+  if (!pub || !frame || !frame->isValid()) {
+    return;
+  }
+  auto meta = frame->metadata();
+  vxl_camera_msgs::msg::Metadata msg;
+  msg.header.stamp = now();
+  msg.header.frame_id = frame_id;
+  msg.timestamp_us = meta.timestamp_us;
+  msg.frame_number = meta.sequence;
+  msg.exposure_us = meta.exposure_us;
+  msg.gain = meta.gain;
+  pub->publish(msg);
 }
 
 void VxlCameraNode::publishRGBD(
@@ -399,14 +580,9 @@ void VxlCameraNode::publishPointCloud(
     color_img = frameToImageMsg(color, tf_prefix_ + "vxl_color_optical_frame");
   }
 
-  auto pc = pc_generator_->generate(
-    *depth_img,
-    color_img ? &(*color_img) : nullptr,
+  // Submit to the worker — drop-old keeps latency low under sustained load.
+  pc_generator_->submit(depth_img, color_img,
     tf_prefix_ + "vxl_depth_optical_frame");
-
-  if (pc) {
-    pc_pub_->publish(std::move(pc));
-  }
 }
 
 sensor_msgs::msg::Image::SharedPtr VxlCameraNode::frameToImageMsg(
@@ -642,8 +818,63 @@ rcl_interfaces::msg::SetParametersResult VxlCameraNode::onParameterChange(
   rcl_interfaces::msg::SetParametersResult result;
   result.successful = true;
 
+  const auto & cold = coldParameters();
+  const auto & table = dynamicOptionTable();
+
   for (const auto & param : params) {
-    RCLCPP_INFO(get_logger(), "Parameter '%s' changed", param.get_name().c_str());
+    const auto & name = param.get_name();
+
+    if (cold.count(name)) {
+      result.successful = false;
+      result.reason = "Parameter '" + name +
+        "' cannot be changed at runtime; restart the node with the new value.";
+      RCLCPP_WARN(get_logger(), "%s", result.reason.c_str());
+      return result;
+    }
+
+    auto it = table.find(name);
+    if (it != table.end()) {
+      try {
+        auto sensor = device_->getSensor(it->second.sensor);
+        if (!sensor) {
+          result.successful = false;
+          result.reason = "Sensor unavailable for parameter '" + name + "'";
+          return result;
+        }
+        if (!sensor->isOptionSupported(it->second.option)) {
+          result.successful = false;
+          result.reason = "Option not supported by device: " + name;
+          return result;
+        }
+        sensor->setOption(it->second.option, static_cast<float>(param.as_int()));
+        RCLCPP_INFO(get_logger(), "Set %s = %ld", name.c_str(), param.as_int());
+      } catch (const vxl::Error & e) {
+        result.successful = false;
+        result.reason = std::string("SDK error setting ") + name + ": " + e.what();
+        RCLCPP_ERROR(get_logger(), "%s", result.reason.c_str());
+        return result;
+      }
+      continue;
+    }
+
+    // Other parameters (e.g. point_cloud.color) are read on each frame, no action needed here.
+    RCLCPP_DEBUG(get_logger(), "Parameter '%s' updated (no SDK binding)", name.c_str());
+  }
+
+  // Hot-reload point cloud filter when any related param changed.
+  if (pc_generator_) {
+    bool pc_changed = std::any_of(params.begin(), params.end(),
+      [](const rclcpp::Parameter & p) {
+        return p.get_name().rfind("point_cloud.", 0) == 0;
+      });
+    if (pc_changed) {
+      PointCloudFilter f;
+      f.min_z_m = static_cast<float>(get_parameter("point_cloud.min_z").as_double());
+      f.max_z_m = static_cast<float>(get_parameter("point_cloud.max_z").as_double());
+      f.decimation = get_parameter("point_cloud.decimation").as_int();
+      f.organized = get_parameter("point_cloud.organized").as_bool();
+      pc_generator_->setFilter(f);
+    }
   }
 
   return result;

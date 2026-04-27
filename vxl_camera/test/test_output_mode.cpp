@@ -2,6 +2,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <vxl_camera_msgs/msg/rgbd.hpp>
+#include <vxl_camera_msgs/msg/metadata.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 
 #include <chrono>
 #include <memory>
@@ -127,4 +129,53 @@ TEST_F(OutputModeTest, ImageTopicSubscription)
 
   EXPECT_NE(color_sub, nullptr);
   EXPECT_NE(depth_sub, nullptr);
+}
+
+TEST_F(OutputModeTest, MetadataMessageStructure)
+{
+  // Per-stream metadata is published alongside frames; verify the message layout.
+  vxl_camera_msgs::msg::Metadata meta;
+  meta.header.frame_id = "vxl_color_optical_frame";
+  meta.timestamp_us = 1234567890ULL;
+  meta.frame_number = 42;
+  meta.exposure_us = 16000;
+  meta.gain = 128;
+
+  EXPECT_EQ(meta.timestamp_us, 1234567890ULL);
+  EXPECT_EQ(meta.frame_number, 42u);
+  EXPECT_EQ(meta.exposure_us, 16000u);
+  EXPECT_EQ(meta.gain, 128u);
+}
+
+TEST_F(OutputModeTest, DiagnosticsArrayCanBeSubscribed)
+{
+  // /diagnostics is published by diagnostic_updater::Updater. Verify subscription works.
+  auto node = std::make_shared<rclcpp::Node>("test_diag");
+  auto sub = node->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+    "/diagnostics", 10,
+    [](const diagnostic_msgs::msg::DiagnosticArray::SharedPtr) {});
+  EXPECT_NE(sub, nullptr);
+}
+
+TEST_F(OutputModeTest, DynamicParameterDescriptorAccepted)
+{
+  // declareDynamicOptions uses integer_range constraints; verify the descriptor shape.
+  auto node = std::make_shared<rclcpp::Node>("test_dyn_param");
+
+  rcl_interfaces::msg::ParameterDescriptor desc;
+  desc.description = "exposure";
+  rcl_interfaces::msg::IntegerRange range;
+  range.from_value = 1;
+  range.to_value = 10000;
+  range.step = 1;
+  desc.integer_range.push_back(range);
+
+  EXPECT_NO_THROW(node->declare_parameter<int>("color.exposure", 5000, desc));
+  EXPECT_EQ(node->get_parameter("color.exposure").as_int(), 5000);
+
+  // In-range value succeeds; out-of-range value is rejected by the descriptor.
+  auto in_range = node->set_parameter(rclcpp::Parameter("color.exposure", 8000));
+  EXPECT_TRUE(in_range.successful);
+  auto out_of_range = node->set_parameter(rclcpp::Parameter("color.exposure", 99999));
+  EXPECT_FALSE(out_of_range.successful);
 }

@@ -6,7 +6,7 @@ VxlSense SDK 的 ROS2 封装，将 VxlSense 深度相机集成到 ROS2 生态系
 
 ```
 VxlROS2/
-├── vxlsense-sdk/        # VxlSense SDK 发行包 (解压到此)
+├── vxlsdk/              # VxlSense SDK 占位目录（兜底来源；正常开发用同级 vxlsdk 项目）
 ├── vxl_camera/          # 主节点包 (C++)
 ├── vxl_camera_msgs/     # 自定义消息/服务定义
 ├── vxl_description/     # URDF 模型描述
@@ -19,8 +19,8 @@ VxlROS2/
 - **ROS2 版本**: Humble+ (最低支持)
 - **构建系统**: ament_cmake
 - **节点架构**: 必须使用 rclcpp_components 组件化节点，支持 intra-process 零拷贝
-- **SDK 依赖**: VxlSense SDK 发行包解压到 `vxlsense-sdk/`，不引用源码仓库
-- **SDK 路径优先级**: CMake 参数 > 环境变量 VXL_SDK_DIR > 默认 `../vxlsense-sdk/`
+- **SDK 依赖**: 优先使用同级 `../vxlsdk/` 项目编译产物（`vxlsdk/sdk/current/`）；也可解压发行包到 `vxlros2/vxlsdk/`
+- **SDK 路径优先级**: CMake 参数 > 环境变量 `VXL_SDK_DIR` > 同级 `../../vxlsdk/sdk/current/` > 项目内 `../vxlsdk/`
 - **API 统一**: 全部使用 VxlSense C++ API (vxl.hpp)，禁止直接调用 C API
 
 ## 编码规范
@@ -38,6 +38,10 @@ VxlROS2/
 3. **输出模式**: 默认 RGBD 或 RGB+Depth 两种模式，IR/单流等仅供调测
 4. **参数系统**: 通过 ROS2 动态参数暴露 VxlSense 选项，支持运行时调整
 5. **资源释放顺序**: Stream → Sensor → Device → Context，严格遵守
+6. **双节点变体**: 同时提供两个组件入口
+   - `vxl_camera::VxlCameraNode` (executable: `vxl_camera_node`) — 非 lifecycle，启动即工作
+   - `vxl_camera::VxlCameraLifecycleNode` (executable: `vxl_camera_lifecycle_node`) — lifecycle 管理 + USB 热插拔自动恢复（启动默认 auto-activate；`--no-auto-activate` 让外部 lifecycle_manager 接管）
+   - 共享 `sensor_options.{hpp,cpp}` 中的动态参数表与冷参数集
 
 ## 版本管理
 
@@ -55,5 +59,5 @@ colcon test --packages-select vxl_camera
 ## 参考
 
 - 竞品 ROS2 集成: `../VxlSense/comps/{orbbec,realsense,stereolabs}`
-- VxlSense SDK API: `vxlsense-sdk/include/vxl*.hpp`
+- VxlSense SDK API: `vxlsdk/include/vxl*.hpp`（或同级项目源码 `../vxlsdk/include/vxl*.hpp`）
 - SDK 发行包: https://github.com/asvoxel/VxlSense/releases

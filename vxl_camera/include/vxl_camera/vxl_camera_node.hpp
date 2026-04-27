@@ -5,13 +5,16 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <image_transport/image_transport.hpp>
 #include <camera_info_manager/camera_info_manager.hpp>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <std_srvs/srv/trigger.hpp>
+#include <diagnostic_updater/diagnostic_updater.hpp>
 
 #include <vxl_camera_msgs/msg/rgbd.hpp>
 #include <vxl_camera_msgs/msg/extrinsics.hpp>
+#include <vxl_camera_msgs/msg/metadata.hpp>
 #include <vxl_camera_msgs/srv/get_device_info.hpp>
 #include <vxl_camera_msgs/srv/get_int32.hpp>
 #include <vxl_camera_msgs/srv/set_int32.hpp>
@@ -23,6 +26,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace vxl_camera
@@ -47,10 +51,12 @@ private:
 
   // Initialization
   void declareParameters();
+  void declareDynamicOptions();
   OutputMode parseOutputMode(const std::string & mode_str) const;
   void initDevice();
   void setupPublishers();
   void setupServices();
+  void setupDiagnostics();
   void startStreaming();
   void shutdownDevice();
 
@@ -61,6 +67,13 @@ private:
   void publishDepth(const vxl::FramePtr & frame);
   void publishIR(const vxl::FramePtr & frame);
   void publishPointCloud(const vxl::FramePtr & depth, const vxl::FramePtr & color);
+  void publishMetadata(
+    const rclcpp::Publisher<vxl_camera_msgs::msg::Metadata>::SharedPtr & pub,
+    const vxl::FramePtr & frame,
+    const std::string & frame_id);
+
+  // Diagnostics
+  void diagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper & stat);
 
   // Helpers
   sensor_msgs::msg::Image::SharedPtr frameToImageMsg(
@@ -107,6 +120,9 @@ private:
   rclcpp::Publisher<vxl_camera_msgs::msg::RGBD>::SharedPtr rgbd_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub_;
   rclcpp::Publisher<vxl_camera_msgs::msg::Extrinsics>::SharedPtr extrinsics_pub_;
+  rclcpp::Publisher<vxl_camera_msgs::msg::Metadata>::SharedPtr color_meta_pub_;
+  rclcpp::Publisher<vxl_camera_msgs::msg::Metadata>::SharedPtr depth_meta_pub_;
+  rclcpp::Publisher<vxl_camera_msgs::msg::Metadata>::SharedPtr ir_meta_pub_;
 
   // Camera info
   sensor_msgs::msg::CameraInfo::SharedPtr color_camera_info_;
@@ -123,6 +139,22 @@ private:
 
   // Parameter callback handle
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
+
+  // Diagnostics
+  std::shared_ptr<diagnostic_updater::Updater> diag_updater_;
+  rclcpp::TimerBase::SharedPtr diag_timer_;
+
+  // Per-stream frame counters (for diagnostics — published rate vs. expected)
+  struct StreamStats {
+    std::atomic<uint64_t> frames_published{0};
+    std::atomic<uint64_t> frames_dropped{0};
+    std::atomic<uint64_t> last_sample_count{0};
+    std::chrono::steady_clock::time_point last_sample_time{};
+  };
+  StreamStats color_stats_;
+  StreamStats depth_stats_;
+  StreamStats ir_stats_;
+  std::mutex stats_mutex_;
 };
 
 }  // namespace vxl_camera
