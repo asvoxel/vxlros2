@@ -1,6 +1,7 @@
 #include "vxl_camera/vxl_camera_node.hpp"
 #include "vxl_camera/sensor_options.hpp"
 #include "vxl_camera/frame_utils.hpp"
+#include "vxl_camera/filter_chain.hpp"
 
 #include <cv_bridge/cv_bridge.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -78,6 +79,23 @@ void VxlCameraNode::declareParameters()
   declare_parameter("point_cloud.max_z", 0.0);    // meters; 0 = no max limit
   declare_parameter("point_cloud.decimation", 1);  // pixel skip; 1 = every pixel
   declare_parameter("point_cloud.organized", true);
+
+  // Depth post-processing filters (host-side, applied in SDK polling thread
+  // before frames are delivered). Default: all off — backwards compatible.
+  declare_parameter("filters.decimation.enabled", false);
+  declare_parameter("filters.decimation.scale", 2);          // 2 / 4 / 8
+  declare_parameter("filters.threshold.enabled", false);
+  declare_parameter("filters.threshold.min_mm", 100);
+  declare_parameter("filters.threshold.max_mm", 5000);
+  declare_parameter("filters.spatial.enabled", false);
+  declare_parameter("filters.spatial.magnitude", 2);          // 1..5
+  declare_parameter("filters.spatial.alpha", 0.5);            // 0.25..1.0
+  declare_parameter("filters.spatial.delta", 20.0);           // 1..50
+  declare_parameter("filters.temporal.enabled", false);
+  declare_parameter("filters.temporal.alpha", 0.4);           // 0.0..1.0
+  declare_parameter("filters.temporal.delta", 20.0);          // 1..100
+  declare_parameter("filters.hole_filling.enabled", false);
+  declare_parameter("filters.hole_filling.mode", 0);          // 0/1/2
 
   // Sync
   declare_parameter("sync_mode", "strict");
@@ -229,6 +247,9 @@ void VxlCameraNode::setupPublishers()
 
   extrinsics_pub_ = create_publisher<vxl_camera_msgs::msg::Extrinsics>(
     "~/extrinsics/depth_to_color", rclcpp::QoS(1).transient_local());
+
+  // Push initial filter chain to backend (default: all off → no-op).
+  backend_->setFilterChain(readFilterChainParams(*this));
 
   // Publish extrinsics once (latched)
   if (auto ext = backend_->getExtrinsics(vxl::SensorType::Depth, vxl::SensorType::Color)) {
@@ -742,6 +763,20 @@ rcl_interfaces::msg::SetParametersResult VxlCameraNode::onParameterChange(
       f.organized = get_parameter("point_cloud.organized").as_bool();
       pc_generator_->setFilter(f);
     }
+  }
+
+  // Hot-reload depth filter chain when any filters.* param changed.
+  // Use the override merge: get_parameter() inside this callback returns
+  // stale values (commit happens after callback success).
+  bool filters_changed = std::any_of(params.begin(), params.end(),
+    [](const rclcpp::Parameter & p) {
+      return p.get_name().rfind(kFilterParamPrefix, 0) == 0;
+    });
+  if (filters_changed) {
+    auto fc = readFilterChainParams(*this);
+    applyFilterParamOverrides(fc, params);
+    backend_->setFilterChain(fc);
+    RCLCPP_INFO(get_logger(), "Filter chain: %s", filterChainSummary(fc).c_str());
   }
 
   return result;

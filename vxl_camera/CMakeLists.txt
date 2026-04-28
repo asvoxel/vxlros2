@@ -135,6 +135,7 @@ set(NODE_SOURCES
   src/sdk_camera_backend.cpp
   src/sensor_options.cpp
   src/frame_utils.cpp
+  src/filter_chain.cpp
   src/point_cloud_generator.cpp
 )
 
@@ -244,6 +245,10 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_sdk_camera_backend test/test_sdk_camera_backend.cpp)
   target_link_libraries(test_sdk_camera_backend vxl_camera_component)
+
+  ament_add_gtest(test_filter_chain test/test_filter_chain.cpp)
+  target_link_libraries(test_filter_chain vxl_camera_component)
+  ament_target_dependencies(test_filter_chain rclcpp)
 
   # ─── Mock-driven launch test for lifecycle node ─────────────────────────
   # Builds a test-only executable that wires VxlCameraLifecycleNode to a

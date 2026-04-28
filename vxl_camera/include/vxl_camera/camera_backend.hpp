@@ -1,6 +1,8 @@
 #ifndef VXL_CAMERA__CAMERA_BACKEND_HPP_
 #define VXL_CAMERA__CAMERA_BACKEND_HPP_
 
+#include "vxl_camera/filter_chain.hpp"
+
 #include <vxl.hpp>
 
 #include <cstdint>
@@ -102,6 +104,12 @@ public:
   // Register a callback fired when any device is added or removed at the
   // SDK/USB layer. The callback may run on an SDK-owned thread.
   virtual void setDeviceEventCallback(BackendDeviceEventCallback cb) = 0;
+
+  // ── Depth post-processing ───────────────────────────────────────────────
+  // Configure the host-side filter chain applied to depth frames before
+  // delivery. Safe to call any time (also while streaming); takes effect
+  // from the next frame. Default state is all filters disabled.
+  virtual void setFilterChain(const FilterChain & chain) = 0;
 };
 
 using CameraBackendPtr = std::shared_ptr<ICameraBackend>;

@@ -218,6 +218,54 @@ TEST_F(NodeWithMockTest, HwResetServiceCallsBackend)
   EXPECT_EQ(mock->hwResetCount(), 1);
 }
 
+TEST_F(NodeWithMockTest, FilterChainPushedToBackendOnConstruction)
+{
+  auto mock = makeMockWithDevice();
+  // Construction should push a (default-disabled) FilterChain to the backend.
+  auto node = std::make_shared<VxlCameraNode>(defaultOptions(), mock);
+  EXPECT_GE(mock->filterChainSetCount(), 1);
+  auto fc = mock->lastFilterChain();
+  EXPECT_FALSE(fc.hole_filling.enabled);
+  EXPECT_FALSE(fc.spatial.enabled);
+}
+
+TEST_F(NodeWithMockTest, FilterParamSetTriggersBackendUpdate)
+{
+  auto mock = makeMockWithDevice();
+  auto node = std::make_shared<VxlCameraNode>(defaultOptions(), mock);
+  int before = mock->filterChainSetCount();
+
+  // Enable hole-filling at runtime — backend should see the new chain.
+  auto r = node->set_parameter(rclcpp::Parameter("filters.hole_filling.enabled", true));
+  EXPECT_TRUE(r.successful) << r.reason;
+
+  EXPECT_GE(mock->filterChainSetCount(), before + 1);
+  auto fc = mock->lastFilterChain();
+  EXPECT_TRUE(fc.hole_filling.enabled)
+    << "Backend should have received the new filter config (not stale read)";
+}
+
+TEST_F(NodeWithMockTest, MultipleFilterParamsAtomicMerge)
+{
+  auto mock = makeMockWithDevice();
+  auto node = std::make_shared<VxlCameraNode>(defaultOptions(), mock);
+
+  // Enable spatial + tune two of its params in one batch.
+  auto results = node->set_parameters({
+    rclcpp::Parameter("filters.spatial.enabled", true),
+    rclcpp::Parameter("filters.spatial.alpha", 0.8),
+    rclcpp::Parameter("filters.spatial.delta", 30.0),
+  });
+  for (const auto & r : results) {
+    EXPECT_TRUE(r.successful) << r.reason;
+  }
+
+  auto fc = mock->lastFilterChain();
+  EXPECT_TRUE(fc.spatial.enabled);
+  EXPECT_FLOAT_EQ(fc.spatial.alpha, 0.8f);
+  EXPECT_FLOAT_EQ(fc.spatial.delta, 30.0f);
+}
+
 TEST_F(NodeWithMockTest, StartStreamingConfigMatchesParameters)
 {
   auto mock = makeMockWithDevice();

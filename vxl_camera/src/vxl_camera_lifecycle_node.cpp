@@ -1,6 +1,7 @@
 #include "vxl_camera/vxl_camera_lifecycle_node.hpp"
 #include "vxl_camera/sensor_options.hpp"
 #include "vxl_camera/frame_utils.hpp"
+#include "vxl_camera/filter_chain.hpp"
 
 #include <cv_bridge/cv_bridge.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -215,6 +216,22 @@ void VxlCameraLifecycleNode::declareParameters()
   declare_parameter("point_cloud.max_z", 0.0);
   declare_parameter("point_cloud.decimation", 1);
   declare_parameter("point_cloud.organized", true);
+
+  // Depth post-processing filters (host-side, see filter_chain.hpp).
+  declare_parameter("filters.decimation.enabled", false);
+  declare_parameter("filters.decimation.scale", 2);
+  declare_parameter("filters.threshold.enabled", false);
+  declare_parameter("filters.threshold.min_mm", 100);
+  declare_parameter("filters.threshold.max_mm", 5000);
+  declare_parameter("filters.spatial.enabled", false);
+  declare_parameter("filters.spatial.magnitude", 2);
+  declare_parameter("filters.spatial.alpha", 0.5);
+  declare_parameter("filters.spatial.delta", 20.0);
+  declare_parameter("filters.temporal.enabled", false);
+  declare_parameter("filters.temporal.alpha", 0.4);
+  declare_parameter("filters.temporal.delta", 20.0);
+  declare_parameter("filters.hole_filling.enabled", false);
+  declare_parameter("filters.hole_filling.mode", 0);
   declare_parameter("sync_mode", "strict");
   declare_parameter("frame_queue_size", 4);
   declare_parameter("tf_prefix", "");
@@ -355,6 +372,9 @@ void VxlCameraLifecycleNode::buildPublishers()
 
   connection_state_pub_ = create_publisher<std_msgs::msg::String>(
     "~/connection_state", rclcpp::QoS(1).transient_local());
+
+  // Push initial filter chain to backend (default: all off → no-op).
+  backend_->setFilterChain(readFilterChainParams(*this));
 }
 
 void VxlCameraLifecycleNode::buildServices()
@@ -857,6 +877,19 @@ VxlCameraLifecycleNode::onParameterChange(const std::vector<rclcpp::Parameter> &
       f.organized = get_parameter("point_cloud.organized").as_bool();
       pc_generator_->setFilter(f);
     }
+  }
+
+  // Hot-reload depth filter chain. See vxl_camera_node.cpp for the why on
+  // applyFilterParamOverrides — get_parameter() inside on_set is stale.
+  bool filters_changed = std::any_of(params.begin(), params.end(),
+    [](const rclcpp::Parameter & p) {
+      return p.get_name().rfind(kFilterParamPrefix, 0) == 0;
+    });
+  if (filters_changed) {
+    auto fc = readFilterChainParams(*this);
+    applyFilterParamOverrides(fc, params);
+    backend_->setFilterChain(fc);
+    RCLCPP_INFO(get_logger(), "Filter chain: %s", filterChainSummary(fc).c_str());
   }
 
   return result;

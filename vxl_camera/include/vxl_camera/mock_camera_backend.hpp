@@ -192,6 +192,21 @@ public:
     device_event_callback_ = std::move(cb);
   }
 
+  void setFilterChain(const FilterChain & chain) override
+  {
+    std::lock_guard<std::mutex> lk(mtx_);
+    filter_chain_ = chain;
+    filter_chain_set_count_++;
+  }
+
+  // Test inspection
+  FilterChain lastFilterChain() const
+  {
+    std::lock_guard<std::mutex> lk(mtx_);
+    return filter_chain_;
+  }
+  int filterChainSetCount() const {return filter_chain_set_count_.load();}
+
 private:
   struct OptionState {
     vxl_option_range_t range;
@@ -220,6 +235,10 @@ private:
   std::atomic<int> hw_reset_calls_{0};
   std::vector<SetOptionCall> set_option_calls_;
   BackendDeviceEventCallback device_event_callback_;
+
+  // Filter chain state (last call recorded for tests)
+  FilterChain filter_chain_;
+  std::atomic<int> filter_chain_set_count_{0};
 
   mutable std::mutex mtx_;
 };

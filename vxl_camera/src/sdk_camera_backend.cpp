@@ -1,7 +1,10 @@
 #include "vxl_camera/camera_backend.hpp"
 
+#include <vxl_filter.hpp>
+
 #include <atomic>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -197,6 +200,13 @@ public:
       [cb = std::move(cb)](const vxl::DeviceInfo & info, bool added) {cb(info, added);});
   }
 
+  void setFilterChain(const FilterChain & chain) override
+  {
+    auto pipeline = buildFilterPipeline(chain);
+    std::lock_guard<std::mutex> lk(filter_mutex_);
+    filter_pipeline_ = std::move(pipeline);
+  }
+
 private:
   void pollLoop()
   {
@@ -204,9 +214,33 @@ private:
       try {
         auto frameset = pipeline_->waitForFrameSet(100);
         if (!frameset || frameset->empty() || !callback_) {continue;}
+
+        // Apply host-side filter chain to depth frame, if configured.
+        // The pipeline is rebuilt on setFilterChain() so we just need a
+        // shared_ptr snapshot under the mutex (FilterPipeline itself is
+        // not thread-safe to use from multiple threads concurrently, but
+        // we only ever apply it from this single poll thread).
+        std::shared_ptr<vxl::FilterPipeline> filters;
+        {
+          std::lock_guard<std::mutex> lk(filter_mutex_);
+          filters = filter_pipeline_;
+        }
+
+        auto raw_depth = frameset->getDepthFrame();
+        vxl::FramePtr final_depth = raw_depth;
+        if (filters && !filters->empty() && raw_depth && raw_depth->isValid()) {
+          try {
+            auto filtered = filters->process(raw_depth);
+            if (filtered) {final_depth = filtered;}
+          } catch (const vxl::Error & e) {
+            // Filter failure should not stop the stream — fall back to raw.
+            (void)e;
+          }
+        }
+
         auto bs = std::make_shared<BackendFrameSet>();
         bs->color = copyFrame(frameset->getColorFrame());
-        bs->depth = copyFrame(frameset->getDepthFrame());
+        bs->depth = copyFrame(final_depth);
         bs->ir = copyFrame(frameset->getIRFrame());
         callback_(bs);
       } catch (const vxl::Error &) {
@@ -215,12 +249,66 @@ private:
     }
   }
 
+  // Translate a FilterChain config into a vxl::FilterPipeline.
+  // Returns nullptr if no filters are enabled (callers can short-circuit).
+  static std::shared_ptr<vxl::FilterPipeline> buildFilterPipeline(const FilterChain & fc)
+  {
+    auto pipe = std::make_shared<vxl::FilterPipeline>();
+
+    // Order matters: decimate first (cheaper downstream), then range-clip,
+    // then smooth, then fill holes. Mirrors RealSense recommended order.
+    if (fc.decimation.enabled) {
+      auto f = std::make_shared<vxl::DecimationFilter>();
+      f->setScale(fc.decimation.scale);
+      pipe->add(f);
+    }
+    if (fc.threshold.enabled) {
+      auto f = std::make_shared<vxl::ThresholdFilter>();
+      f->setMinDistance(fc.threshold.min_mm);
+      f->setMaxDistance(fc.threshold.max_mm);
+      pipe->add(f);
+    }
+    if (fc.spatial.enabled) {
+      auto f = std::make_shared<vxl::SpatialFilter>();
+      f->setMagnitude(fc.spatial.magnitude);
+      f->setAlpha(fc.spatial.alpha);
+      f->setDelta(fc.spatial.delta);
+      pipe->add(f);
+    }
+    if (fc.temporal.enabled) {
+      auto f = std::make_shared<vxl::TemporalFilter>();
+      f->setAlpha(fc.temporal.alpha);
+      f->setDelta(fc.temporal.delta);
+      pipe->add(f);
+    }
+    if (fc.hole_filling.enabled) {
+      auto f = std::make_shared<vxl::HoleFillingFilter>();
+      using HM = vxl::HoleFillingFilter::Mode;
+      HM m = HM::NearestFromAround;
+      switch (fc.hole_filling.mode) {
+        case 1: m = HM::FarestFromAround; break;
+        case 2: m = HM::FillFromLeft; break;
+        default: m = HM::NearestFromAround; break;
+      }
+      f->setMode(m);
+      pipe->add(f);
+    }
+
+    return pipe->empty() ? nullptr : pipe;
+  }
+
   vxl::ContextPtr context_;
   vxl::DevicePtr device_;
   std::unique_ptr<vxl::Pipeline> pipeline_;
   BackendFrameSetCallback callback_;
   std::thread poll_thread_;
   std::atomic<bool> running_{false};
+
+  // Filter pipeline (host-side post-processing applied in pollLoop).
+  // shared_ptr so the poll thread can take a stable snapshot without
+  // holding the mutex for the duration of process().
+  std::mutex filter_mutex_;
+  std::shared_ptr<vxl::FilterPipeline> filter_pipeline_;
 };
 
 }  // namespace

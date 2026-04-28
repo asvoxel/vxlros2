@@ -40,3 +40,6 @@ __pycache__/
 
 # Claude Code working state
 .claude/
+
+# Third-party ROS2 reference repos (cloned for comparison/research only)
+3rds/
