@@ -87,6 +87,89 @@ TEST(SensorOptions, DistinctSdkOptionsPerSensor)
   }
 }
 
+// ─── Dependency check ──────────────────────────────────────────────────────
+
+using vxl_camera::checkOptionDependencies;
+
+TEST(SensorOptions, EmptyBatchAccepted)
+{
+  auto r = checkOptionDependencies({}, 0, 0, 0);
+  EXPECT_TRUE(r.ok);
+}
+
+TEST(SensorOptions, ManualExposureWithAutoOnIsRejected)
+{
+  // current state: color.auto_exposure=1; user tries to set color.exposure
+  std::vector<rclcpp::Parameter> p{rclcpp::Parameter("color.exposure", 5000)};
+  auto r = checkOptionDependencies(p, /*color_ae=*/1, 0, 0);
+  EXPECT_FALSE(r.ok);
+  EXPECT_NE(r.reason.find("auto_exposure"), std::string::npos);
+}
+
+TEST(SensorOptions, ManualGainWithAutoOnIsRejected)
+{
+  std::vector<rclcpp::Parameter> p{rclcpp::Parameter("color.gain", 100)};
+  auto r = checkOptionDependencies(p, 1, 0, 0);
+  EXPECT_FALSE(r.ok);
+}
+
+TEST(SensorOptions, ManualExposureWithAutoOffIsAccepted)
+{
+  std::vector<rclcpp::Parameter> p{rclcpp::Parameter("color.exposure", 5000)};
+  auto r = checkOptionDependencies(p, /*color_ae=*/0, 0, 0);
+  EXPECT_TRUE(r.ok);
+}
+
+TEST(SensorOptions, AtomicTurnOffAutoAndSetManualIsAccepted)
+{
+  // Same batch turns off auto AND sets manual — should be allowed since
+  // the effective auto state at end of batch is 0.
+  std::vector<rclcpp::Parameter> p{
+    rclcpp::Parameter("color.auto_exposure", 0),
+    rclcpp::Parameter("color.exposure", 5000),
+  };
+  auto r = checkOptionDependencies(p, /*color_ae=*/1, 0, 0);
+  EXPECT_TRUE(r.ok) << r.reason;
+}
+
+TEST(SensorOptions, AtomicTurnOnAutoAndSetManualIsRejected)
+{
+  // Inverse: turn on auto AND set manual at the same time → conflict.
+  std::vector<rclcpp::Parameter> p{
+    rclcpp::Parameter("color.auto_exposure", 1),
+    rclcpp::Parameter("color.exposure", 5000),
+  };
+  auto r = checkOptionDependencies(p, 0, 0, 0);
+  EXPECT_FALSE(r.ok);
+}
+
+TEST(SensorOptions, AutoWhiteBalanceBlocksManualWB)
+{
+  std::vector<rclcpp::Parameter> p{rclcpp::Parameter("color.white_balance", 4500)};
+  auto r = checkOptionDependencies(p, 0, /*color_awb=*/1, 0);
+  EXPECT_FALSE(r.ok);
+  EXPECT_NE(r.reason.find("white_balance"), std::string::npos);
+}
+
+TEST(SensorOptions, DepthAutoExposureGate)
+{
+  std::vector<rclcpp::Parameter> p{rclcpp::Parameter("depth.exposure", 8000)};
+  auto r = checkOptionDependencies(p, 0, 0, /*depth_ae=*/1);
+  EXPECT_FALSE(r.ok);
+  // depth.gain should be gated too
+  std::vector<rclcpp::Parameter> p2{rclcpp::Parameter("depth.gain", 100)};
+  auto r2 = checkOptionDependencies(p2, 0, 0, 1);
+  EXPECT_FALSE(r2.ok);
+}
+
+TEST(SensorOptions, UnrelatedParamsBypassDependencyCheck)
+{
+  // Setting a non-exposure/gain/wb param is unaffected by auto-modes.
+  std::vector<rclcpp::Parameter> p{rclcpp::Parameter("color.brightness", 50)};
+  auto r = checkOptionDependencies(p, 1, 1, 1);
+  EXPECT_TRUE(r.ok);
+}
+
 TEST(SensorOptions, TableIsStableAcrossCalls)
 {
   // The table is a function-local static; verify the same reference is returned.

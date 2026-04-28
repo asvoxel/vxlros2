@@ -43,4 +43,45 @@ const std::set<std::string> & coldParameters()
   return cold;
 }
 
+OptionDependencyResult checkOptionDependencies(
+  const std::vector<rclcpp::Parameter> & params,
+  int current_color_auto_exposure,
+  int current_color_auto_wb,
+  int current_depth_auto_exposure)
+{
+  // Compute the EFFECTIVE auto-mode state for this batch: start from current
+  // committed values, overlay proposals from `params`. This way a batch like
+  // {color.auto_exposure=0, color.exposure=5000} is accepted (auto is being
+  // turned off in the same transaction).
+  int eff_color_ae = current_color_auto_exposure;
+  int eff_color_awb = current_color_auto_wb;
+  int eff_depth_ae = current_depth_auto_exposure;
+  for (const auto & p : params) {
+    const auto & n = p.get_name();
+    if (n == "color.auto_exposure") {eff_color_ae = static_cast<int>(p.as_int());}
+    else if (n == "color.auto_white_balance") {eff_color_awb = static_cast<int>(p.as_int());}
+    else if (n == "depth.auto_exposure") {eff_depth_ae = static_cast<int>(p.as_int());}
+  }
+
+  for (const auto & p : params) {
+    const auto & n = p.get_name();
+    if ((n == "color.exposure" || n == "color.gain") && eff_color_ae > 0) {
+      return {false,
+        "'" + n + "' cannot be set while 'color.auto_exposure' is enabled. "
+        "Set color.auto_exposure=0 first (or in the same batch)."};
+    }
+    if (n == "color.white_balance" && eff_color_awb > 0) {
+      return {false,
+        "'color.white_balance' cannot be set while 'color.auto_white_balance' "
+        "is enabled. Disable auto WB first (or in the same batch)."};
+    }
+    if ((n == "depth.exposure" || n == "depth.gain") && eff_depth_ae > 0) {
+      return {false,
+        "'" + n + "' cannot be set while 'depth.auto_exposure' is enabled. "
+        "Set depth.auto_exposure=0 first (or in the same batch)."};
+    }
+  }
+  return {true, ""};
+}
+
 }  // namespace vxl_camera

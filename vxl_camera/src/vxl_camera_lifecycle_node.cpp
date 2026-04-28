@@ -874,6 +874,20 @@ VxlCameraLifecycleNode::onParameterChange(const std::vector<rclcpp::Parameter> &
   const auto & cold = coldParameters();
   const auto & table = dynamicOptionTable();
 
+  // auto_* mode dependency check (e.g. auto_exposure=1 ↔ manual exposure).
+  auto get_int_or = [this](const std::string & n) -> int {
+      return has_parameter(n) ? static_cast<int>(get_parameter(n).as_int()) : 0;
+    };
+  auto dep = checkOptionDependencies(params,
+      get_int_or("color.auto_exposure"),
+      get_int_or("color.auto_white_balance"),
+      get_int_or("depth.auto_exposure"));
+  if (!dep.ok) {
+    result.successful = false;
+    result.reason = dep.reason;
+    return result;
+  }
+
   for (const auto & param : params) {
     const auto & name = param.get_name();
 

@@ -130,6 +130,22 @@ ros2 launch vxl_camera vxl_camera.launch.py \
 
 Topic: `~/depth/points` (`sensor_msgs/PointCloud2`)
 
+### Per-product launches (recommended)
+
+Use the product-specific launch for sensible defaults (depth scale, filter
+recommendations, etc):
+
+```bash
+ros2 launch vxl_camera vxl435.launch.py    # depth=mm, host-side filters
+ros2 launch vxl_camera vxl615.launch.py    # depth_scale=8, device-side denoise/median/outlier on
+# Override any param: e.g.
+ros2 launch vxl_camera vxl615.launch.py output_mode:=rgb+depth tf_prefix:=cam1_
+```
+
+Generic launches (`vxl_camera.launch.py`, `vxl_camera_lifecycle.launch.py`)
+ship neutral defaults (depth scale=1.0, all filters off) — fine for VXL435,
+suboptimal for VXL615.
+
 ### Lifecycle Mode (auto USB hotplug recovery)
 
 ```bash

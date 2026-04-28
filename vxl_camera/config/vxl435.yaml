@@ -1,3 +1,12 @@
+# VXL435 default parameter set.
+#
+# Product profile:
+#   - 1× IR projector + stereo IR sensors → depth via stereo matching
+#   - Color: MJPEG (SDK decodes), 1280×720 max @ 30 fps
+#   - Depth: Z16, raw value in millimeters (depth_scale = 1.0)
+#   - No IMU, no device-side post-processing filters (use host-side)
+#
+# Override any value with launch args or `--ros-args -p key:=val`.
 /**:
   ros__parameters:
     output_mode: "rgbd"
@@ -13,6 +22,28 @@
       fps: 30
 
     sync_mode: "strict"
+
     point_cloud:
       enabled: false
       color: true
+
+    # Depth-to-color alignment: 1.0 because VXL435 emits Z16 directly in mm.
+    align_depth:
+      enabled: false
+      scale: 1.0
+
+    # Host-side filters: hole_filling is the most useful single addition for
+    # indoor robotics. Off by default to keep CPU low; flip on as needed.
+    filters:
+      hole_filling:
+        enabled: false  # set true for nav2/SLAM use cases
+        mode: 0         # 0=NearestFromAround
+      # Device-side filters are NOT supported on VXL435; leaving them off
+      # is the only correct setting for this SKU.
+      device:
+        denoise:
+          enabled: false
+        median:
+          enabled: false
+        outlier_removal:
+          enabled: false

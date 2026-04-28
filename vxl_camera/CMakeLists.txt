@@ -232,6 +232,7 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_sensor_options test/test_sensor_options.cpp)
   target_link_libraries(test_sensor_options vxl_camera_component)
+  ament_target_dependencies(test_sensor_options rclcpp)
 
   ament_add_gtest(test_node_with_mock test/test_node_with_mock.cpp)
   target_link_libraries(test_node_with_mock vxl_camera_component)

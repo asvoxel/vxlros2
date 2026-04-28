@@ -1,0 +1,53 @@
+# VXL615 default parameter set (VXL6X5 family).
+#
+# Product profile:
+#   - IR projector + NIR camera, structured light depth
+#   - Color: MJPEG, 1280×720 max @ 30 fps
+#   - Depth: Z16 with depth_scale = 8.0 (raw / 8 = mm)
+#   - Device-side post-processing available on the depth sensor — use them
+#     instead of host-side equivalents to save CPU.
+#
+# Override any value with launch args or `--ros-args -p key:=val`.
+/**:
+  ros__parameters:
+    output_mode: "rgbd"
+
+    color:
+      width: 1280
+      height: 720
+      fps: 30
+
+    depth:
+      width: 640
+      height: 480
+      fps: 30
+
+    sync_mode: "strict"
+
+    point_cloud:
+      enabled: false
+      color: true
+
+    # Depth-to-color alignment: scale 8.0 because Z16 is in raw / 8 → mm.
+    align_depth:
+      enabled: false
+      scale: 8.0
+
+    filters:
+      # Host-side hole_filling is still useful (no device equivalent), but
+      # default off so users can decide based on downstream needs.
+      hole_filling:
+        enabled: false
+        mode: 0
+      # Device-side filters: enabled by default. Zero host CPU; FPGA handles
+      # them. Tunables are conservative — increase level for more aggressive
+      # smoothing at the cost of edge fidelity.
+      device:
+        denoise:
+          enabled: true
+          level: 2          # 1..3
+        median:
+          enabled: true
+          kernel_size: 3    # 3 or 5
+        outlier_removal:
+          enabled: true
