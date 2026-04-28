@@ -539,7 +539,7 @@ void VxlCameraNode::publishPointCloud(
 
 sensor_msgs::msg::Image::SharedPtr VxlCameraNode::frameToImageMsg(
   const BackendFramePtr & frame,
-  const std::string & frame_id) const
+  const std::string & frame_id)
 {
   if (!frame || !frame->isValid()) {
     return nullptr;

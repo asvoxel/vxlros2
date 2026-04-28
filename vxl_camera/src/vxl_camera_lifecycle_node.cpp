@@ -73,6 +73,12 @@ VxlCameraLifecycleNode::on_activate(const State & /*previous*/)
     if (rgbd_pub_) {rgbd_pub_->on_activate();}
     if (pc_pub_) {pc_pub_->on_activate();}
     if (extrinsics_pub_) {extrinsics_pub_->on_activate();}
+    if (color_pub_) {color_pub_->on_activate();}
+    if (color_info_pub_) {color_info_pub_->on_activate();}
+    if (depth_pub_) {depth_pub_->on_activate();}
+    if (depth_info_pub_) {depth_info_pub_->on_activate();}
+    if (ir_pub_) {ir_pub_->on_activate();}
+    if (ir_info_pub_) {ir_info_pub_->on_activate();}
     if (color_meta_pub_) {color_meta_pub_->on_activate();}
     if (depth_meta_pub_) {depth_meta_pub_->on_activate();}
     if (ir_meta_pub_) {ir_meta_pub_->on_activate();}
@@ -122,6 +128,12 @@ VxlCameraLifecycleNode::on_deactivate(const State & /*previous*/)
   if (rgbd_pub_) {rgbd_pub_->on_deactivate();}
   if (pc_pub_) {pc_pub_->on_deactivate();}
   if (extrinsics_pub_) {extrinsics_pub_->on_deactivate();}
+  if (color_pub_) {color_pub_->on_deactivate();}
+  if (color_info_pub_) {color_info_pub_->on_deactivate();}
+  if (depth_pub_) {depth_pub_->on_deactivate();}
+  if (depth_info_pub_) {depth_info_pub_->on_deactivate();}
+  if (ir_pub_) {ir_pub_->on_deactivate();}
+  if (ir_info_pub_) {ir_info_pub_->on_deactivate();}
   if (color_meta_pub_) {color_meta_pub_->on_deactivate();}
   if (depth_meta_pub_) {depth_meta_pub_->on_deactivate();}
   if (ir_meta_pub_) {ir_meta_pub_->on_deactivate();}
@@ -144,13 +156,16 @@ VxlCameraLifecycleNode::on_cleanup(const State & /*previous*/)
   rgbd_pub_.reset();
   pc_pub_.reset();
   extrinsics_pub_.reset();
+  color_pub_.reset();
+  color_info_pub_.reset();
+  depth_pub_.reset();
+  depth_info_pub_.reset();
+  ir_pub_.reset();
+  ir_info_pub_.reset();
   color_meta_pub_.reset();
   depth_meta_pub_.reset();
   ir_meta_pub_.reset();
   connection_state_pub_.reset();
-  color_pub_ = image_transport::CameraPublisher();
-  depth_pub_ = image_transport::CameraPublisher();
-  ir_pub_ = image_transport::CameraPublisher();
   device_info_srv_.reset();
   get_option_srv_.reset();
   set_option_srv_.reset();
@@ -294,20 +309,22 @@ void VxlCameraLifecycleNode::buildPublishers()
     rgbd_pub_ = create_publisher<vxl_camera_msgs::msg::RGBD>("~/rgbd", qos);
   }
 
-  // image_transport::CameraPublisher is not lifecycle-aware. We only call
-  // publish() while the stream is running (which only happens in ACTIVE state),
-  // so messages don't leak in INACTIVE.
+  // Split Image + CameraInfo so each is a true LifecyclePublisher.
+  // (image_transport::CameraPublisher takes rclcpp::Node*, not LifecycleNode.)
   if (need_color && output_mode_ != OutputMode::RGBD) {
-    color_pub_ = image_transport::create_camera_publisher(
-      this, "~/color/image_raw", qos.get_rmw_qos_profile());
+    color_pub_ = create_publisher<sensor_msgs::msg::Image>("~/color/image_raw", qos);
+    color_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
+      "~/color/camera_info", qos);
   }
   if (need_depth && output_mode_ != OutputMode::RGBD) {
-    depth_pub_ = image_transport::create_camera_publisher(
-      this, "~/depth/image_raw", qos.get_rmw_qos_profile());
+    depth_pub_ = create_publisher<sensor_msgs::msg::Image>("~/depth/image_raw", qos);
+    depth_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
+      "~/depth/camera_info", qos);
   }
   if (need_ir) {
-    ir_pub_ = image_transport::create_camera_publisher(
-      this, "~/ir/image_raw", qos.get_rmw_qos_profile());
+    ir_pub_ = create_publisher<sensor_msgs::msg::Image>("~/ir/image_raw", qos);
+    ir_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
+      "~/ir/camera_info", qos);
   }
 
   if (need_color) {
@@ -487,49 +504,49 @@ void VxlCameraLifecycleNode::framesetCallback(BackendFrameSetPtr frameset)
       break;
     case OutputMode::RGBDepth:
       if (color_frame) {
-        publishImage(color_pub_, color_frame, tf_prefix_ + "vxl_color_optical_frame",
+        publishImage(color_pub_, color_info_pub_, color_frame, tf_prefix_ + "vxl_color_optical_frame",
           color_camera_info_);
         color_stats_.frames_published++;
       }
       if (depth_frame) {
-        publishImage(depth_pub_, depth_frame, tf_prefix_ + "vxl_depth_optical_frame",
+        publishImage(depth_pub_, depth_info_pub_, depth_frame, tf_prefix_ + "vxl_depth_optical_frame",
           depth_camera_info_);
         depth_stats_.frames_published++;
       }
       break;
     case OutputMode::ColorOnly:
       if (color_frame) {
-        publishImage(color_pub_, color_frame, tf_prefix_ + "vxl_color_optical_frame",
+        publishImage(color_pub_, color_info_pub_, color_frame, tf_prefix_ + "vxl_color_optical_frame",
           color_camera_info_);
         color_stats_.frames_published++;
       }
       break;
     case OutputMode::DepthOnly:
       if (depth_frame) {
-        publishImage(depth_pub_, depth_frame, tf_prefix_ + "vxl_depth_optical_frame",
+        publishImage(depth_pub_, depth_info_pub_, depth_frame, tf_prefix_ + "vxl_depth_optical_frame",
           depth_camera_info_);
         depth_stats_.frames_published++;
       }
       break;
     case OutputMode::IR:
       if (ir_frame) {
-        publishImage(ir_pub_, ir_frame, tf_prefix_ + "vxl_ir_optical_frame", nullptr);
+        publishImage(ir_pub_, ir_info_pub_, ir_frame, tf_prefix_ + "vxl_ir_optical_frame", nullptr);
         ir_stats_.frames_published++;
       }
       break;
     case OutputMode::All:
       if (color_frame) {
-        publishImage(color_pub_, color_frame, tf_prefix_ + "vxl_color_optical_frame",
+        publishImage(color_pub_, color_info_pub_, color_frame, tf_prefix_ + "vxl_color_optical_frame",
           color_camera_info_);
         color_stats_.frames_published++;
       }
       if (depth_frame) {
-        publishImage(depth_pub_, depth_frame, tf_prefix_ + "vxl_depth_optical_frame",
+        publishImage(depth_pub_, depth_info_pub_, depth_frame, tf_prefix_ + "vxl_depth_optical_frame",
           depth_camera_info_);
         depth_stats_.frames_published++;
       }
       if (ir_frame) {
-        publishImage(ir_pub_, ir_frame, tf_prefix_ + "vxl_ir_optical_frame", nullptr);
+        publishImage(ir_pub_, ir_info_pub_, ir_frame, tf_prefix_ + "vxl_ir_optical_frame", nullptr);
         ir_stats_.frames_published++;
       }
       break;
@@ -583,18 +600,21 @@ void VxlCameraLifecycleNode::publishRGBD(
 }
 
 void VxlCameraLifecycleNode::publishImage(
-  const image_transport::CameraPublisher & pub,
+  const std::shared_ptr<ImagePub> & img_pub,
+  const std::shared_ptr<CameraInfoPub> & info_pub,
   const BackendFramePtr & frame,
   const std::string & frame_id,
   const sensor_msgs::msg::CameraInfo::SharedPtr & info)
 {
+  if (!img_pub || !img_pub->is_activated()) {return;}
   auto img = frameToImageMsg(frame, frame_id);
   if (!img) {return;}
-  auto ci = info ?
-    std::make_shared<sensor_msgs::msg::CameraInfo>(*info) :
-    std::make_shared<sensor_msgs::msg::CameraInfo>();
-  ci->header = img->header;
-  pub.publish(*img, *ci);
+  img_pub->publish(*img);
+  if (info_pub && info_pub->is_activated()) {
+    sensor_msgs::msg::CameraInfo ci = info ? *info : sensor_msgs::msg::CameraInfo();
+    ci.header = img->header;
+    info_pub->publish(ci);
+  }
 }
 
 void VxlCameraLifecycleNode::publishMetadata(
@@ -614,7 +634,7 @@ void VxlCameraLifecycleNode::publishMetadata(
 }
 
 sensor_msgs::msg::Image::SharedPtr VxlCameraLifecycleNode::frameToImageMsg(
-  const BackendFramePtr & frame, const std::string & frame_id) const
+  const BackendFramePtr & frame, const std::string & frame_id)
 {
   if (!frame || !frame->isValid()) {return nullptr;}
 
@@ -657,12 +677,12 @@ void VxlCameraLifecycleNode::monitorTick()
   auto state_id = get_current_state().id();
 
   // ACTIVE → device gone → deactivate
-  if (!present && state_id == State::PRIMARY_STATE_ACTIVE) {
+  if (!present && state_id == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
     RCLCPP_WARN(get_logger(), "Device disconnected; deactivating");
     deactivate();
   }
   // INACTIVE → device back → re-activate (only if we were previously active)
-  else if (present && state_id == State::PRIMARY_STATE_INACTIVE &&
+  else if (present && state_id == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE &&
     auto_recover_.load() && was_active_before_disconnect_.load())
   {
     RCLCPP_INFO(get_logger(), "Device reconnected; re-activating");
@@ -693,10 +713,10 @@ void VxlCameraLifecycleNode::publishConnectionState()
   std_msgs::msg::String msg;
   std::string state_label;
   switch (get_current_state().id()) {
-    case State::PRIMARY_STATE_UNCONFIGURED: state_label = "UNCONFIGURED"; break;
-    case State::PRIMARY_STATE_INACTIVE:     state_label = "INACTIVE"; break;
-    case State::PRIMARY_STATE_ACTIVE:       state_label = "ACTIVE"; break;
-    case State::PRIMARY_STATE_FINALIZED:    state_label = "FINALIZED"; break;
+    case lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED: state_label = "UNCONFIGURED"; break;
+    case lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE:     state_label = "INACTIVE"; break;
+    case lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE:       state_label = "ACTIVE"; break;
+    case lifecycle_msgs::msg::State::PRIMARY_STATE_FINALIZED:    state_label = "FINALIZED"; break;
     default:                                state_label = "TRANSITIONING"; break;
   }
   msg.data = state_label + (device_present_.load() ? "/CONNECTED" : "/DISCONNECTED");
@@ -869,12 +889,12 @@ void VxlCameraLifecycleNode::diagnosticsCallback(
   };
 
   auto state_id = get_current_state().id();
-  if (state_id == State::PRIMARY_STATE_ACTIVE) {
+  if (state_id == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
     stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Streaming");
   } else {
     stat.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN,
       std::string("Lifecycle state: ") +
-      (state_id == State::PRIMARY_STATE_INACTIVE ? "INACTIVE" : "OTHER"));
+      (state_id == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE ? "INACTIVE" : "OTHER"));
   }
 
   if (color_meta_pub_) {report("color", color_stats_, get_parameter("color.fps").as_int());}

@@ -4,6 +4,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
 #include <rclcpp_lifecycle/lifecycle_publisher.hpp>
+#include <lifecycle_msgs/msg/state.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -56,6 +57,10 @@ public:
     rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
   using State = rclcpp_lifecycle::State;
 
+  // Pub typealiases (public so the .cpp's out-of-class definitions can name them).
+  using ImagePub = rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::Image>;
+  using CameraInfoPub = rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::CameraInfo>;
+
   explicit VxlCameraLifecycleNode(const rclcpp::NodeOptions & options);
   // Test-friendly constructor: inject a mock or alternate backend.
   VxlCameraLifecycleNode(const rclcpp::NodeOptions & options, CameraBackendPtr backend);
@@ -86,7 +91,8 @@ private:
   void framesetCallback(BackendFrameSetPtr frameset);
   void publishRGBD(const BackendFramePtr & color, const BackendFramePtr & depth);
   void publishImage(
-    const image_transport::CameraPublisher & pub,
+    const std::shared_ptr<ImagePub> & img_pub,
+    const std::shared_ptr<CameraInfoPub> & info_pub,
     const BackendFramePtr & frame,
     const std::string & frame_id,
     const sensor_msgs::msg::CameraInfo::SharedPtr & info);
@@ -96,8 +102,10 @@ private:
     const std::string & frame_id);
 
   // Helpers
+  // Non-const because RCLCPP_*_THROTTLE inside requires a mutable Clock
+  // (LifecycleNode::get_clock() const returns ConstSharedPtr).
   sensor_msgs::msg::Image::SharedPtr frameToImageMsg(
-    const BackendFramePtr & frame, const std::string & frame_id) const;
+    const BackendFramePtr & frame, const std::string & frame_id);
 
   // Hotplug
   void onDeviceEvent(const vxl::DeviceInfo & info, bool added);
@@ -135,10 +143,16 @@ private:
   bool publish_tf_ = true;
   std::string target_serial_;  // serial we're bound to (for hotplug filtering)
 
-  // Lifecycle publishers
-  image_transport::CameraPublisher color_pub_;
-  image_transport::CameraPublisher depth_pub_;
-  image_transport::CameraPublisher ir_pub_;
+  // Lifecycle publishers — image_transport doesn't support LifecycleNode in
+  // Humble, so we publish raw Image + CameraInfo separately. Loses transport
+  // plugins (compressed/theora/etc.) but lifecycle activation works correctly.
+  // ImagePub / CameraInfoPub typealiases declared in public: section above.
+  std::shared_ptr<ImagePub> color_pub_;
+  std::shared_ptr<CameraInfoPub> color_info_pub_;
+  std::shared_ptr<ImagePub> depth_pub_;
+  std::shared_ptr<CameraInfoPub> depth_info_pub_;
+  std::shared_ptr<ImagePub> ir_pub_;
+  std::shared_ptr<CameraInfoPub> ir_info_pub_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<vxl_camera_msgs::msg::RGBD>> rgbd_pub_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::PointCloud2>> pc_pub_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<vxl_camera_msgs::msg::Extrinsics>>

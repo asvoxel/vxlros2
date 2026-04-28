@@ -80,15 +80,52 @@ if(NOT VXL_LIBRARY)
   message(FATAL_ERROR "VxlSense library not found in ${VXL_LIB_DIR}")
 endif()
 
+# libasvxl.a is a static archive that wraps libuvc + libusb-1.0 calls but does
+# NOT include their object code. Consumers must link them transitively.
+set(VXL_TRANSITIVE_LIBS "")
+
+if(VXL_PLATFORM STREQUAL "linux")
+  # libuvc: prefer the bundled static archive shipped alongside libasvxl.a
+  # (built from vxlsdk/3rds/libuvc/build); fall back to system libuvc.
+  find_library(VXL_LIBUVC NAMES uvc PATHS ${VXL_LIB_DIR} NO_DEFAULT_PATH)
+  if(NOT VXL_LIBUVC)
+    find_library(VXL_LIBUVC NAMES uvc)
+  endif()
+  if(NOT VXL_LIBUVC)
+    message(FATAL_ERROR
+      "libuvc not found. The SDK ships libuvc.a in lib/linux/ when built from\n"
+      "  source via vxlsdk's release scripts. Either install libuvc-dev system-wide\n"
+      "  or rebuild the SDK and copy 3rds/libuvc/build/libuvc.a into\n"
+      "  ${VXL_LIB_DIR}/libuvc.a")
+  endif()
+  list(APPEND VXL_TRANSITIVE_LIBS ${VXL_LIBUVC})
+
+  # libusb-1.0 is always a system dep on Linux.
+  find_library(VXL_LIBUSB NAMES usb-1.0)
+  if(NOT VXL_LIBUSB)
+    message(FATAL_ERROR "libusb-1.0 not found. apt install libusb-1.0-0-dev")
+  endif()
+  list(APPEND VXL_TRANSITIVE_LIBS ${VXL_LIBUSB} pthread)
+
+  # libjpeg for MJPEG decoding (libuvc dep).
+  find_library(VXL_LIBJPEG NAMES jpeg)
+  if(NOT VXL_LIBJPEG)
+    message(FATAL_ERROR "libjpeg not found. apt install libjpeg-dev")
+  endif()
+  list(APPEND VXL_TRANSITIVE_LIBS ${VXL_LIBJPEG})
+endif()
+
 # Create proper imported target for IDE support and transitive deps
 add_library(VxlSense::asvxl STATIC IMPORTED)
 set_target_properties(VxlSense::asvxl PROPERTIES
   IMPORTED_LOCATION "${VXL_LIBRARY}"
   INTERFACE_INCLUDE_DIRECTORIES "${VXL_INCLUDE_DIR}"
+  INTERFACE_LINK_LIBRARIES "${VXL_TRANSITIVE_LIBS}"
 )
 
 message(STATUS "VXL SDK version: ${VXL_SDK_DIR}")
 message(STATUS "VXL library:     ${VXL_LIBRARY}")
+message(STATUS "VXL transitive:  ${VXL_TRANSITIVE_LIBS}")
 
 # ─── Component library ───────────────────────────────────────────────────────
 

@@ -1,11 +1,27 @@
 #include <gtest/gtest.h>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include "vxl_camera/point_cloud_generator.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <thread>
+
+namespace
+{
+
+// Read z of the i-th point via PointCloud2 iterator. point_step is NOT always
+// 12 bytes for an xyz cloud — the ROS2 modifier pads to 16 for RGB alignment,
+// so raw `float*` arithmetic with stride 3 reads garbage.
+float readPointZ(sensor_msgs::msg::PointCloud2 & cloud, size_t i)
+{
+  sensor_msgs::PointCloud2Iterator<float> it(cloud, "z");
+  for (size_t k = 0; k < i; ++k) {++it;}
+  return *it;
+}
+
+}  // namespace
 
 class PointCloudTest : public ::testing::Test
 {
@@ -165,12 +181,11 @@ TEST_F(PointCloudTest, RangeFilterClipsFarPoints)
   EXPECT_EQ(result->width, 2u);
   EXPECT_EQ(result->height, 2u);
 
-  const float * pts = reinterpret_cast<const float *>(result->data.data());
   // Point 0 (0.5m, kept), Point 1 (5m, NaN), Point 2 (0.2m, NaN), Point 3 (1m, kept)
-  EXPECT_FLOAT_EQ(pts[0 * 3 + 2], 0.5f);
-  EXPECT_TRUE(std::isnan(pts[1 * 3 + 2]));
-  EXPECT_TRUE(std::isnan(pts[2 * 3 + 2]));
-  EXPECT_FLOAT_EQ(pts[3 * 3 + 2], 1.0f);
+  EXPECT_FLOAT_EQ(readPointZ(*result, 0), 0.5f);
+  EXPECT_TRUE(std::isnan(readPointZ(*result, 1)));
+  EXPECT_TRUE(std::isnan(readPointZ(*result, 2)));
+  EXPECT_FLOAT_EQ(readPointZ(*result, 3), 1.0f);
 }
 
 TEST_F(PointCloudTest, DecimationReducesGrid)
@@ -407,8 +422,7 @@ TEST_F(PointCloudTest, MinGreaterThanMaxDropsAllPoints)
 
   auto result = generator_->generate(depth, nullptr, "f");
   ASSERT_NE(result, nullptr);
-  const float * pts = reinterpret_cast<const float *>(result->data.data());
   for (int i = 0; i < 4; i++) {
-    EXPECT_TRUE(std::isnan(pts[i * 3 + 2])) << "Point " << i << " z should be NaN";
+    EXPECT_TRUE(std::isnan(readPointZ(*result, i))) << "Point " << i << " z should be NaN";
   }
 }

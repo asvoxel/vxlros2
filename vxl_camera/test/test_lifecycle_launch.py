@@ -13,7 +13,7 @@ from launch_testing.actions import ReadyToTest
 
 import rclpy
 from rclpy.node import Node as RclpyNode
-from rclpy.qos import QoSProfile, DurabilityPolicy
+from rclpy.qos import QoSProfile, DurabilityPolicy, qos_profile_sensor_data
 
 from vxl_camera_msgs.msg import Metadata, Extrinsics
 from diagnostic_msgs.msg import DiagnosticArray
@@ -59,10 +59,12 @@ class TestLifecycleLaunch(unittest.TestCase):
             f'Expected ACTIVE (3), got {future.result().current_state.label}')
 
     def test_color_metadata_topic_published(self):
+        # Publisher uses SensorDataQoS (best-effort); subscriber must match
+        # else QoS-incompatible and no messages flow.
         received = []
         sub = self.node.create_subscription(
             Metadata, '/vxl_camera/color/metadata',
-            lambda m: received.append(m), 10)
+            lambda m: received.append(m), qos_profile_sensor_data)
         # Synthetic source pumps at ~30 Hz; expect several messages within seconds.
         self._spin_until(lambda: len(received) >= 3, timeout_s=5.0)
         sub  # keep alive
@@ -76,7 +78,7 @@ class TestLifecycleLaunch(unittest.TestCase):
         received = []
         sub = self.node.create_subscription(
             Metadata, '/vxl_camera/depth/metadata',
-            lambda m: received.append(m), 10)
+            lambda m: received.append(m), qos_profile_sensor_data)
         self._spin_until(lambda: len(received) >= 3, timeout_s=5.0)
         sub
         self.assertGreaterEqual(len(received), 3)

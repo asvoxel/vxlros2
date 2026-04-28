@@ -69,9 +69,11 @@ private:
   void diagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper & stat);
 
   // Helpers
+  // Non-const because RCLCPP_*_THROTTLE inside requires a mutable Clock
+  // (Node::get_clock() const returns ConstSharedPtr).
   sensor_msgs::msg::Image::SharedPtr frameToImageMsg(
     const BackendFramePtr & frame,
-    const std::string & frame_id) const;
+    const std::string & frame_id);
   void publishStaticTFs();
 
   // Service callbacks

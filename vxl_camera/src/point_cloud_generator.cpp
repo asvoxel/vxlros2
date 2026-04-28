@@ -86,6 +86,19 @@ sensor_msgs::msg::PointCloud2::UniquePtr PointCloudGenerator::generate(
   cloud->header.frame_id = frame_id;
   cloud->is_bigendian = false;
 
+  // Set width/height BEFORE setPointCloud2Fields*() so the modifier allocates
+  // data buffer of width*height*point_step bytes — for organized this is the
+  // final layout; for dense we'll shrink later via modifier.resize(kept).
+  if (f.organized) {
+    cloud->width = out_w;
+    cloud->height = out_h;
+    cloud->is_dense = false;
+  } else {
+    cloud->width = static_cast<uint32_t>(out_w) * out_h;  // upper bound
+    cloud->height = 1;
+    cloud->is_dense = true;
+  }
+
   sensor_msgs::PointCloud2Modifier modifier(*cloud);
   if (has_color) {
     modifier.setPointCloud2Fields(4,
@@ -106,12 +119,8 @@ sensor_msgs::msg::PointCloud2::UniquePtr PointCloudGenerator::generate(
   const float max_z = f.max_z_m;
 
   if (f.organized) {
-    // Organized: width × height matches the (decimated) depth grid; invalid points are NaN.
-    cloud->width = out_w;
-    cloud->height = out_h;
-    cloud->is_dense = false;
-    modifier.resize(static_cast<size_t>(out_w) * out_h);
-
+    // Data buffer already sized correctly by setPointCloud2Fields* (width*height
+    // was set above). No resize() needed.
     sensor_msgs::PointCloud2Iterator<float> jx(*cloud, "x");
     sensor_msgs::PointCloud2Iterator<float> jy(*cloud, "y");
     sensor_msgs::PointCloud2Iterator<float> jz(*cloud, "z");
@@ -147,9 +156,8 @@ sensor_msgs::msg::PointCloud2::UniquePtr PointCloudGenerator::generate(
       }
     }
   } else {
-    // Dense: only valid points are emitted; size is unknown until we walk the grid.
-    cloud->is_dense = true;
-    modifier.resize(static_cast<size_t>(out_w) * out_h);  // upper bound
+    // Dense: walk the grid, count kept; modifier.resize() at the end shrinks
+    // data + sets width=kept, height=1.
     sensor_msgs::PointCloud2Iterator<float> jx(*cloud, "x");
     sensor_msgs::PointCloud2Iterator<float> jy(*cloud, "y");
     sensor_msgs::PointCloud2Iterator<float> jz(*cloud, "z");
@@ -178,8 +186,9 @@ sensor_msgs::msg::PointCloud2::UniquePtr PointCloudGenerator::generate(
       }
     }
     modifier.resize(kept);
-    cloud->width = static_cast<uint32_t>(kept);
-    cloud->height = 1;
+    // Modifier::resize() already sets width=kept, height=1; row_step is not
+    // updated by the modifier, set it explicitly.
+    cloud->row_step = cloud->width * cloud->point_step;
   }
 
   return cloud;
