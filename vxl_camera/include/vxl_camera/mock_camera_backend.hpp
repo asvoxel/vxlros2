@@ -199,6 +199,14 @@ public:
     filter_chain_set_count_++;
   }
 
+  void setAlignDepthToColor(bool enabled, float scale) override
+  {
+    std::lock_guard<std::mutex> lk(mtx_);
+    align_enabled_ = enabled;
+    align_scale_ = scale;
+    align_set_count_++;
+  }
+
   // Test inspection
   FilterChain lastFilterChain() const
   {
@@ -206,6 +214,18 @@ public:
     return filter_chain_;
   }
   int filterChainSetCount() const {return filter_chain_set_count_.load();}
+
+  bool alignEnabled() const
+  {
+    std::lock_guard<std::mutex> lk(mtx_);
+    return align_enabled_;
+  }
+  float alignScale() const
+  {
+    std::lock_guard<std::mutex> lk(mtx_);
+    return align_scale_;
+  }
+  int alignSetCount() const {return align_set_count_.load();}
 
 private:
   struct OptionState {
@@ -239,6 +259,11 @@ private:
   // Filter chain state (last call recorded for tests)
   FilterChain filter_chain_;
   std::atomic<int> filter_chain_set_count_{0};
+
+  // Depth-to-color alignment state
+  bool align_enabled_ = false;
+  float align_scale_ = 1.0f;
+  std::atomic<int> align_set_count_{0};
 
   mutable std::mutex mtx_;
 };

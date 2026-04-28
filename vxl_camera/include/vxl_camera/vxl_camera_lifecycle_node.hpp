@@ -153,6 +153,8 @@ private:
   std::shared_ptr<CameraInfoPub> depth_info_pub_;
   std::shared_ptr<ImagePub> ir_pub_;
   std::shared_ptr<CameraInfoPub> ir_info_pub_;
+  std::shared_ptr<ImagePub> aligned_depth_pub_;
+  std::shared_ptr<CameraInfoPub> aligned_depth_info_pub_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<vxl_camera_msgs::msg::RGBD>> rgbd_pub_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::PointCloud2>> pc_pub_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<vxl_camera_msgs::msg::Extrinsics>>

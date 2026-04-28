@@ -25,6 +25,13 @@ std::string filterChainSummary(const FilterChain & fc)
   if (fc.spatial.enabled) {append("spatial");}
   if (fc.temporal.enabled) {append("temporal");}
   if (fc.hole_filling.enabled) {append("hole_fill");}
+  if (fc.device.denoise.enabled) {
+    append("dev_denoise/" + std::to_string(fc.device.denoise.level));
+  }
+  if (fc.device.median.enabled) {
+    append("dev_median/" + std::to_string(fc.device.median.kernel_size));
+  }
+  if (fc.device.outlier_removal.enabled) {append("dev_outlier");}
 
   return any ? os.str() : "off";
 }

@@ -55,6 +55,27 @@ struct FilterChain {
     bool enabled = false;
     int mode = 0;
   } hole_filling;
+
+  // ── Device-side filters (VXL6X5 only) ─────────────────────────────────
+  // These run on the camera FPGA — zero host CPU. Silently no-op on devices
+  // that don't expose the corresponding options (e.g. VXL435), so it's safe
+  // to leave them on in shared launch configs.
+  struct Device {
+    // Denoise (VXL6X5_OPTION_DENOISE_ENABLE / DENOISE_LEVEL).
+    struct Denoise {
+      bool enabled = false;
+      int level = 2;          // 1..3
+    } denoise;
+    // Median filter on depth (VXL6X5_OPTION_MEDIAN_FILTER / MEDIAN_KERNEL_SIZE).
+    struct Median {
+      bool enabled = false;
+      int kernel_size = 3;    // odd, typically 3 or 5
+    } median;
+    // Outlier removal (VXL6X5_OPTION_OUTLIER_REMOVAL).
+    struct Outlier {
+      bool enabled = false;
+    } outlier_removal;
+  } device;
 };
 
 // Build a string summary of which filters are enabled — useful for diagnostics.
@@ -93,6 +114,17 @@ void applyFilterParamOverrides(FilterChain & fc, const std::vector<ParamT> & par
     else if (n == "filters.hole_filling.enabled") {fc.hole_filling.enabled = p.as_bool();}
     else if (n == "filters.hole_filling.mode") {
       fc.hole_filling.mode = static_cast<int>(p.as_int());
+    }
+    else if (n == "filters.device.denoise.enabled") {fc.device.denoise.enabled = p.as_bool();}
+    else if (n == "filters.device.denoise.level") {
+      fc.device.denoise.level = static_cast<int>(p.as_int());
+    }
+    else if (n == "filters.device.median.enabled") {fc.device.median.enabled = p.as_bool();}
+    else if (n == "filters.device.median.kernel_size") {
+      fc.device.median.kernel_size = static_cast<int>(p.as_int());
+    }
+    else if (n == "filters.device.outlier_removal.enabled") {
+      fc.device.outlier_removal.enabled = p.as_bool();
     }
   }
 }
@@ -135,6 +167,14 @@ FilterChain readFilterChainParams(NodeT & node)
 
   fc.hole_filling.enabled = get_bool("filters.hole_filling.enabled", false);
   fc.hole_filling.mode = get_int("filters.hole_filling.mode", 0);
+
+  // Device-side
+  fc.device.denoise.enabled = get_bool("filters.device.denoise.enabled", false);
+  fc.device.denoise.level = get_int("filters.device.denoise.level", 2);
+  fc.device.median.enabled = get_bool("filters.device.median.enabled", false);
+  fc.device.median.kernel_size = get_int("filters.device.median.kernel_size", 3);
+  fc.device.outlier_removal.enabled =
+    get_bool("filters.device.outlier_removal.enabled", false);
   return fc;
 }
 

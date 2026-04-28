@@ -107,6 +107,7 @@ private:
   image_transport::CameraPublisher color_pub_;
   image_transport::CameraPublisher depth_pub_;
   image_transport::CameraPublisher ir_pub_;
+  image_transport::CameraPublisher aligned_depth_pub_;
   rclcpp::Publisher<vxl_camera_msgs::msg::RGBD>::SharedPtr rgbd_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub_;
   rclcpp::Publisher<vxl_camera_msgs::msg::Extrinsics>::SharedPtr extrinsics_pub_;

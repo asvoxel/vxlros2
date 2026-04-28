@@ -43,6 +43,10 @@ struct BackendFrameSet {
   BackendFramePtr color;
   BackendFramePtr depth;
   BackendFramePtr ir;
+  // Set only when align_depth_to_color is enabled on the backend; this is the
+  // depth frame reprojected into the color camera's view (same resolution as
+  // color, with depth values resampled to color pixels).
+  BackendFramePtr aligned_depth;
 
   bool empty() const {return !color && !depth && !ir;}
 };
@@ -110,6 +114,14 @@ public:
   // delivery. Safe to call any time (also while streaming); takes effect
   // from the next frame. Default state is all filters disabled.
   virtual void setFilterChain(const FilterChain & chain) = 0;
+
+  // ── Depth-to-color alignment ────────────────────────────────────────────
+  // When enabled, the backend reprojects the (possibly filtered) depth frame
+  // into the color camera's view and delivers it as BackendFrameSet::aligned_depth
+  // (in addition to the raw depth). `scale` is the device-specific factor that
+  // converts raw depth values to millimeters (VXL435=1.0, VXL6X5=8.0, VXL605=16.0).
+  // Default disabled.
+  virtual void setAlignDepthToColor(bool enabled, float scale) = 0;
 };
 
 using CameraBackendPtr = std::shared_ptr<ICameraBackend>;

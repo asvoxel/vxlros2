@@ -80,6 +80,8 @@ VxlCameraLifecycleNode::on_activate(const State & /*previous*/)
     if (depth_info_pub_) {depth_info_pub_->on_activate();}
     if (ir_pub_) {ir_pub_->on_activate();}
     if (ir_info_pub_) {ir_info_pub_->on_activate();}
+    if (aligned_depth_pub_) {aligned_depth_pub_->on_activate();}
+    if (aligned_depth_info_pub_) {aligned_depth_info_pub_->on_activate();}
     if (color_meta_pub_) {color_meta_pub_->on_activate();}
     if (depth_meta_pub_) {depth_meta_pub_->on_activate();}
     if (ir_meta_pub_) {ir_meta_pub_->on_activate();}
@@ -135,6 +137,8 @@ VxlCameraLifecycleNode::on_deactivate(const State & /*previous*/)
   if (depth_info_pub_) {depth_info_pub_->on_deactivate();}
   if (ir_pub_) {ir_pub_->on_deactivate();}
   if (ir_info_pub_) {ir_info_pub_->on_deactivate();}
+  if (aligned_depth_pub_) {aligned_depth_pub_->on_deactivate();}
+  if (aligned_depth_info_pub_) {aligned_depth_info_pub_->on_deactivate();}
   if (color_meta_pub_) {color_meta_pub_->on_deactivate();}
   if (depth_meta_pub_) {depth_meta_pub_->on_deactivate();}
   if (ir_meta_pub_) {ir_meta_pub_->on_deactivate();}
@@ -163,6 +167,8 @@ VxlCameraLifecycleNode::on_cleanup(const State & /*previous*/)
   depth_info_pub_.reset();
   ir_pub_.reset();
   ir_info_pub_.reset();
+  aligned_depth_pub_.reset();
+  aligned_depth_info_pub_.reset();
   color_meta_pub_.reset();
   depth_meta_pub_.reset();
   ir_meta_pub_.reset();
@@ -232,11 +238,22 @@ void VxlCameraLifecycleNode::declareParameters()
   declare_parameter("filters.temporal.delta", 20.0);
   declare_parameter("filters.hole_filling.enabled", false);
   declare_parameter("filters.hole_filling.mode", 0);
+
+  // Device-side filters (VXL6X5 only — silently no-op on VXL435).
+  declare_parameter("filters.device.denoise.enabled", false);
+  declare_parameter("filters.device.denoise.level", 2);
+  declare_parameter("filters.device.median.enabled", false);
+  declare_parameter("filters.device.median.kernel_size", 3);
+  declare_parameter("filters.device.outlier_removal.enabled", false);
   declare_parameter("sync_mode", "strict");
   declare_parameter("frame_queue_size", 4);
   declare_parameter("tf_prefix", "");
   declare_parameter("publish_tf", true);
   declare_parameter("auto_recover_on_reconnect", true);
+
+  // Depth-to-color alignment (host-side reprojection via SDK vxl_dip).
+  declare_parameter("align_depth.enabled", false);
+  declare_parameter("align_depth.scale", 1.0);  // VXL435=1.0, VXL6X5=8.0, VXL605=16.0
 
   std::string mode_str = get_parameter("output_mode").as_string();
   auto mode = parseOutputMode(mode_str);
@@ -344,6 +361,15 @@ void VxlCameraLifecycleNode::buildPublishers()
       "~/ir/camera_info", qos);
   }
 
+  // Aligned depth (color view). Always created when both color + depth are
+  // configured; actual publishing is gated on align_depth.enabled.
+  if (need_color && need_depth) {
+    aligned_depth_pub_ = create_publisher<sensor_msgs::msg::Image>(
+      "~/aligned_depth_to_color/image_raw", qos);
+    aligned_depth_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
+      "~/aligned_depth_to_color/camera_info", qos);
+  }
+
   if (need_color) {
     color_meta_pub_ = create_publisher<vxl_camera_msgs::msg::Metadata>("~/color/metadata", qos);
   }
@@ -375,6 +401,11 @@ void VxlCameraLifecycleNode::buildPublishers()
 
   // Push initial filter chain to backend (default: all off → no-op).
   backend_->setFilterChain(readFilterChainParams(*this));
+
+  // Push initial align config.
+  backend_->setAlignDepthToColor(
+    get_parameter("align_depth.enabled").as_bool(),
+    static_cast<float>(get_parameter("align_depth.scale").as_double()));
 }
 
 void VxlCameraLifecycleNode::buildServices()
@@ -592,6 +623,22 @@ void VxlCameraLifecycleNode::framesetCallback(BackendFrameSetPtr frameset)
       }
       pc_generator_->submit(depth_img, color_img,
         tf_prefix_ + "vxl_depth_optical_frame");
+    }
+  }
+
+  // Aligned depth: publish only when backend produced it (align_depth.enabled).
+  if (frameset->aligned_depth && aligned_depth_pub_ &&
+    aligned_depth_pub_->is_activated() && color_camera_info_)
+  {
+    auto img = frameToImageMsg(frameset->aligned_depth,
+        tf_prefix_ + "vxl_color_optical_frame");
+    if (img) {
+      aligned_depth_pub_->publish(*img);
+      if (aligned_depth_info_pub_ && aligned_depth_info_pub_->is_activated()) {
+        sensor_msgs::msg::CameraInfo ci = *color_camera_info_;
+        ci.header = img->header;
+        aligned_depth_info_pub_->publish(ci);
+      }
     }
   }
 }
@@ -863,7 +910,7 @@ VxlCameraLifecycleNode::onParameterChange(const std::vector<rclcpp::Parameter> &
     auto_recover_.store(get_parameter("auto_recover_on_reconnect").as_bool());
   }
 
-  // Hot-reload point cloud filter when any related param changed.
+  // Hot-reload point cloud filter (same stale-read merge as filter_chain).
   if (pc_generator_) {
     bool pc_changed = std::any_of(params.begin(), params.end(),
       [](const rclcpp::Parameter & p) {
@@ -875,8 +922,33 @@ VxlCameraLifecycleNode::onParameterChange(const std::vector<rclcpp::Parameter> &
       f.max_z_m = static_cast<float>(get_parameter("point_cloud.max_z").as_double());
       f.decimation = get_parameter("point_cloud.decimation").as_int();
       f.organized = get_parameter("point_cloud.organized").as_bool();
+      for (const auto & p : params) {
+        const auto & n = p.get_name();
+        if (n == "point_cloud.min_z") {f.min_z_m = static_cast<float>(p.as_double());}
+        else if (n == "point_cloud.max_z") {f.max_z_m = static_cast<float>(p.as_double());}
+        else if (n == "point_cloud.decimation") {f.decimation = static_cast<int>(p.as_int());}
+        else if (n == "point_cloud.organized") {f.organized = p.as_bool();}
+      }
       pc_generator_->setFilter(f);
     }
+  }
+
+  // Hot-reload depth-to-color alignment.
+  bool align_changed = std::any_of(params.begin(), params.end(),
+    [](const rclcpp::Parameter & p) {
+      return p.get_name().rfind("align_depth.", 0) == 0;
+    });
+  if (align_changed) {
+    bool enabled = get_parameter("align_depth.enabled").as_bool();
+    float scale = static_cast<float>(get_parameter("align_depth.scale").as_double());
+    for (const auto & p : params) {
+      const auto & n = p.get_name();
+      if (n == "align_depth.enabled") {enabled = p.as_bool();}
+      else if (n == "align_depth.scale") {scale = static_cast<float>(p.as_double());}
+    }
+    backend_->setAlignDepthToColor(enabled, scale);
+    RCLCPP_INFO(get_logger(), "align_depth: enabled=%d scale=%.2f",
+      static_cast<int>(enabled), scale);
   }
 
   // Hot-reload depth filter chain. See vxl_camera_node.cpp for the why on

@@ -218,6 +218,32 @@ TEST_F(NodeWithMockTest, HwResetServiceCallsBackend)
   EXPECT_EQ(mock->hwResetCount(), 1);
 }
 
+TEST_F(NodeWithMockTest, AlignDepthPushedToBackendOnConstruction)
+{
+  auto mock = makeMockWithDevice();
+  auto node = std::make_shared<VxlCameraNode>(defaultOptions(), mock);
+  EXPECT_GE(mock->alignSetCount(), 1);
+  EXPECT_FALSE(mock->alignEnabled());
+  EXPECT_FLOAT_EQ(mock->alignScale(), 1.0f);
+}
+
+TEST_F(NodeWithMockTest, AlignDepthEnabledViaParameter)
+{
+  auto mock = makeMockWithDevice();
+  auto node = std::make_shared<VxlCameraNode>(defaultOptions(), mock);
+  int before = mock->alignSetCount();
+
+  auto results = node->set_parameters({
+    rclcpp::Parameter("align_depth.enabled", true),
+    rclcpp::Parameter("align_depth.scale", 8.0),
+  });
+  for (const auto & r : results) {EXPECT_TRUE(r.successful) << r.reason;}
+
+  EXPECT_GT(mock->alignSetCount(), before);
+  EXPECT_TRUE(mock->alignEnabled());
+  EXPECT_FLOAT_EQ(mock->alignScale(), 8.0f);
+}
+
 TEST_F(NodeWithMockTest, FilterChainPushedToBackendOnConstruction)
 {
   auto mock = makeMockWithDevice();

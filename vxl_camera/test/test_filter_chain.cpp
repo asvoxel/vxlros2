@@ -98,6 +98,43 @@ TEST_F(FilterChainTest, ApplyOverridesIgnoresNonFilterParams)
   EXPECT_EQ(fc.hole_filling.enabled, fc_before.hole_filling.enabled);
 }
 
+TEST_F(FilterChainTest, DeviceFiltersDefaultOff)
+{
+  FilterChain fc;
+  EXPECT_FALSE(fc.device.denoise.enabled);
+  EXPECT_EQ(fc.device.denoise.level, 2);
+  EXPECT_FALSE(fc.device.median.enabled);
+  EXPECT_EQ(fc.device.median.kernel_size, 3);
+  EXPECT_FALSE(fc.device.outlier_removal.enabled);
+}
+
+TEST_F(FilterChainTest, SummaryIncludesDeviceFilters)
+{
+  FilterChain fc;
+  fc.device.denoise.enabled = true;
+  fc.device.denoise.level = 3;
+  fc.device.outlier_removal.enabled = true;
+  EXPECT_EQ(filterChainSummary(fc), "dev_denoise/3,dev_outlier");
+}
+
+TEST_F(FilterChainTest, ApplyOverridesPicksUpDeviceFilters)
+{
+  FilterChain fc;
+  std::vector<rclcpp::Parameter> params{
+    rclcpp::Parameter("filters.device.denoise.enabled", true),
+    rclcpp::Parameter("filters.device.denoise.level", 3),
+    rclcpp::Parameter("filters.device.median.enabled", true),
+    rclcpp::Parameter("filters.device.median.kernel_size", 5),
+    rclcpp::Parameter("filters.device.outlier_removal.enabled", true),
+  };
+  applyFilterParamOverrides(fc, params);
+  EXPECT_TRUE(fc.device.denoise.enabled);
+  EXPECT_EQ(fc.device.denoise.level, 3);
+  EXPECT_TRUE(fc.device.median.enabled);
+  EXPECT_EQ(fc.device.median.kernel_size, 5);
+  EXPECT_TRUE(fc.device.outlier_removal.enabled);
+}
+
 TEST_F(FilterChainTest, MockBackendRecordsSetFilterChain)
 {
   auto mock = std::make_shared<vxl_camera::MockCameraBackend>();
