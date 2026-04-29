@@ -1,154 +1,166 @@
-# VxlROS2 使用说明
+# VxlROS2 Usage Guide
 
-当前实现支持 **VXL435 / VXL615**（VXL605 待 PID 确认）。两个节点变体：
-- `vxl_camera_node` — 普通节点，启动即工作
-- `vxl_camera_lifecycle_node` — Lifecycle 节点，含 USB 热插拔自动恢复（**生产推荐**）
+Currently supports **VXL435 / VXL615** (VXL605 pending PID assignment). Two
+node variants ship:
+- `vxl_camera_node` — plain node, works the moment it starts
+- `vxl_camera_lifecycle_node` — managed-lifecycle node with USB hotplug
+  auto-recovery (**recommended for production**)
 
 ---
 
-## 1. 最快上手
+## 1. Quick start
 
 ```bash
-# 已编译好 vxl_camera_msgs + vxl_camera + vxl_description 后
+# After building vxl_camera_msgs + vxl_camera + vxl_description
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
-# 按相机型号启动（带产品特定默认值）
+# Launch with per-product defaults
 ros2 launch vxl_camera vxl435.launch.py
-# 或
+# or
 ros2 launch vxl_camera vxl615.launch.py
 ```
 
-启动后默认发布到 `/vxl_camera/rgbd`（同步 RGBD 合成消息）。
+By default the node publishes to `/vxl_camera/rgbd` (a synchronized RGBD
+composite message).
 
 ```bash
-# 看看发了哪些话题
+# What's being published
 ros2 topic list | grep vxl
 
-# 实际帧率
+# Actual frame rate
 ros2 topic hz /vxl_camera/rgbd
 
-# 简单看一帧
+# Peek at a single frame
 ros2 topic echo /vxl_camera/rgbd --once --field rgb.encoding
 ```
 
 ---
 
-## 2. 输出模式
+## 2. Output modes
 
-通过 `output_mode` 参数控制，启动时设：
+Controlled by the `output_mode` parameter, set at launch:
 
 ```bash
 ros2 launch vxl_camera vxl615.launch.py --ros-args -p output_mode:=rgb+depth
 ```
 
-| 模式 | 默认 | 发布的话题 | 用途 |
+| Mode | Default | Topics published | Use case |
 |---|---|---|---|
-| `rgbd` | ✅ | `~/rgbd`（同步合成消息）| RGBD 一起消费的下游（SLAM、点云融合）|
-| `rgb+depth` | | `~/color/image_raw` + `~/color/camera_info`<br>`~/depth/image_raw` + `~/depth/camera_info` | 标准 ROS2 相机 topic，兼容 image_view 之类工具 |
-| `ir` | | `~/ir/image_raw` + `~/ir/camera_info` | 调试 IR 投影器 |
-| `depth_only` | | 只 `~/depth/...` | 不需要彩色时 |
-| `color_only` | | 只 `~/color/...` | 当普通 USB 摄像头用 |
-| `all` | | 全部 | 调测全开 |
+| `rgbd` | ✅ | `~/rgbd` (sync composite) | Downstream consumers that need RGB + depth together (SLAM, point cloud fusion) |
+| `rgb+depth` | | `~/color/image_raw` + `~/color/camera_info`<br>`~/depth/image_raw` + `~/depth/camera_info` | Standard ROS2 camera topics — compatible with image_view etc. |
+| `ir` | | `~/ir/image_raw` + `~/ir/camera_info` | Debugging IR projector |
+| `depth_only` | | Just `~/depth/...` | When you don't need color |
+| `color_only` | | Just `~/color/...` | Use as a regular USB camera |
+| `all` | | Everything | Full debug |
 
-每个流都额外发布 metadata：
-- `~/color/metadata`、`~/depth/metadata`、`~/ir/metadata` —— `vxl_camera_msgs/Metadata`（timestamp_us / sequence / exposure_us / gain）
+Each stream also publishes metadata:
+- `~/color/metadata`, `~/depth/metadata`, `~/ir/metadata` —
+  `vxl_camera_msgs/Metadata` with `timestamp_us` / `sequence` /
+  `exposure_us` / `gain`
 
-外参（latched，TRANSIENT_LOCAL QoS）：
+Extrinsics (latched via TRANSIENT_LOCAL QoS):
 - `~/extrinsics/depth_to_color`
 
 ---
 
-## 3. 参数
+## 3. Parameters
 
-### 冷参数（要 launch 时定，运行时改不了）
+### Cold parameters (set at launch, can't be changed at runtime)
 
-| 参数 | 默认 | 说明 |
+| Parameter | Default | Description |
 |---|---|---|
-| `device_serial` | `""` | 序列号；空=自动选第一台 |
-| `output_mode` | `"rgbd"` | 见上表 |
-| `color.{width,height,fps}` | 1280×720@30 | 彩色流配置 |
-| `depth.{width,height,fps}` | 640×480@30 | 深度流配置 |
-| `ir.{width,height,fps}` | 640×480@30 | IR 流配置 |
-| `point_cloud.enabled` | `false` | 启用 PointCloud2 输出 |
+| `device_serial` | `""` | Serial number; empty = auto-pick first |
+| `output_mode` | `"rgbd"` | See table above |
+| `color.{width,height,fps}` | 1280×720@30 | Color stream config |
+| `depth.{width,height,fps}` | 640×480@30 | Depth stream config |
+| `ir.{width,height,fps}` | 640×480@30 | IR stream config |
+| `point_cloud.enabled` | `false` | Enable PointCloud2 output |
 | `sync_mode` | `"strict"` | `strict` / `approximate` / `none` |
-| `tf_prefix` | `""` | 多相机隔离用，如 `cam1_` |
-| `publish_tf` | `true` | 发静态 TF |
+| `tf_prefix` | `""` | Multi-camera isolation, e.g. `cam1_` |
+| `publish_tf` | `true` | Publish static TF |
 
-### 热参数（运行时 `ros2 param set` 即时生效）
+### Hot parameters (`ros2 param set` takes effect immediately)
 
-#### 传感器选项（按设备能力自动暴露）
+#### Sensor options (auto-discovered from device capability)
 - `color.exposure` / `color.gain` / `color.auto_exposure`
 - `color.white_balance` / `color.auto_white_balance`
 - `color.brightness` / `contrast` / `saturation` / `sharpness` / `gamma` / `hue`
 - `depth.exposure` / `depth.gain` / `depth.auto_exposure`
 - `depth.min_distance` / `depth.max_distance` / `depth.ir_enable`
 
-**互斥保护**：`auto_exposure=1` 时，set `exposure` / `gain` 会被拒绝，error 包含明确原因。要改 manual 值，先关 auto 或同批次一起设：
+**Mutual-exclusion guard**: when `auto_exposure=1`, setting `exposure` or
+`gain` is rejected with a clear reason. To switch to manual values, either
+disable auto first or change both atomically:
 
 ```bash
-# ❌ 拒绝（auto 还开着）
+# ❌ Rejected (auto is still on)
 ros2 param set /vxl_camera color.exposure 5000
 
-# ✅ 同批次：关 auto + 设 manual
+# ✅ Atomic batch: turn auto off + set manual
 ros2 service call /vxl_camera/set_parameters rcl_interfaces/srv/SetParameters \
   "{parameters: [{name: color.auto_exposure, value: {type: 2, integer_value: 0}},
                  {name: color.exposure, value: {type: 2, integer_value: 5000}}]}"
 ```
 
-#### 深度对齐
-- `align_depth.enabled` (bool) — 启用后多发布 `~/aligned_depth_to_color/{image_raw,camera_info}`，深度被重投影到 color 视角，camera_info 用 color 内参
-- `align_depth.scale` (double) — raw → mm 缩放系数：**VXL435 = 1.0**（vxl435.launch.py 默认），**VXL615 = 8.0**（vxl615.launch.py 默认），VXL605 = 16.0
+#### Depth-to-color alignment
+- `align_depth.enabled` (bool) — enables an extra pair of topics
+  `~/aligned_depth_to_color/{image_raw,camera_info}`. Depth is reprojected
+  into the color view; camera_info uses the color intrinsics.
+- `align_depth.scale` (double) — raw → mm conversion factor. **VXL435 = 1.0**
+  (vxl435.launch.py default), **VXL615 = 8.0** (vxl615.launch.py default),
+  VXL605 = 16.0.
 
 ```bash
 ros2 param set /vxl_camera align_depth.enabled true
 ```
 
-#### Host 端深度滤镜（所有产品可用，吃 CPU）
-应用顺序：decimation → threshold → spatial → temporal → hole_filling
+#### Host-side depth filters (available on all SKUs, costs CPU)
+Apply order: decimation → threshold → spatial → temporal → hole_filling
 
-| 参数 | 默认 | 说明 |
+| Parameter | Default | Description |
 |---|---|---|
-| `filters.decimation.{enabled,scale}` | off, 2 | 降采样 2/4/8 |
-| `filters.threshold.{enabled,min_mm,max_mm}` | off, 100, 5000 | 范围裁剪 |
-| `filters.spatial.{enabled,magnitude,alpha,delta}` | off | 边缘保持平滑 |
-| `filters.temporal.{enabled,alpha,delta}` | off | 时域平滑（多帧）|
-| `filters.hole_filling.{enabled,mode}` | off, 0 | 孔洞填充；mode=0/1/2 = nearest/farthest/fill_left |
+| `filters.decimation.{enabled,scale}` | off, 2 | Subsample 2/4/8 |
+| `filters.threshold.{enabled,min_mm,max_mm}` | off, 100, 5000 | Range clip |
+| `filters.spatial.{enabled,magnitude,alpha,delta}` | off | Edge-preserving smoothing |
+| `filters.temporal.{enabled,alpha,delta}` | off | Multi-frame temporal smoothing |
+| `filters.hole_filling.{enabled,mode}` | off, 0 | Hole filling; mode=0/1/2 = nearest/farthest/fill_left |
 
 ```bash
-# 室内导航推荐：开 hole_filling
+# Recommended for indoor navigation: enable hole_filling
 ros2 param set /vxl_camera filters.hole_filling.enabled true
 ```
 
-#### Device 端滤镜（VXL6X5 only，零 CPU；VXL435 静默忽略）
+#### Device-side filters (VXL6X5 only, zero CPU; silently ignored on VXL435)
 
-| 参数 | 默认（vxl615）| 说明 |
+| Parameter | Default (vxl615) | Description |
 |---|---|---|
-| `filters.device.denoise.{enabled,level}` | true, 2 | 设备降噪，level 1-3 |
-| `filters.device.median.{enabled,kernel_size}` | true, 3 | 中值滤波，kernel 3 或 5 |
-| `filters.device.outlier_removal.enabled` | true | 异常值移除 |
+| `filters.device.denoise.{enabled,level}` | true, 2 | Device denoise, level 1-3 |
+| `filters.device.median.{enabled,kernel_size}` | true, 3 | Median filter, kernel 3 or 5 |
+| `filters.device.outlier_removal.enabled` | true | Outlier removal |
 
-VXL615 推荐：device 滤镜全开 + host 关闭（避免双重处理）；VXL435 只能用 host 端。
+VXL615 recommended setup: device filters all on + host filters off (avoid
+double-processing). VXL435 has only host-side available.
 
-#### 点云（启用时生效）
-- `point_cloud.color` (bool) — RGB 着色
-- `point_cloud.{min_z,max_z}` (m) — 距离裁剪（0 = 不限）
-- `point_cloud.decimation` (int) — 像素跳采
-- `point_cloud.organized` (bool) — true = W×H 保 NaN；false = 只发有效点
+#### Point cloud (when enabled)
+- `point_cloud.color` (bool) — RGB colorization
+- `point_cloud.{min_z,max_z}` (m) — range filter (0 = no limit)
+- `point_cloud.decimation` (int) — pixel skip
+- `point_cloud.organized` (bool) — true = W×H grid with NaN; false = dense (valid points only)
 
-#### 其他
-- `auto_recover_on_reconnect` (bool, lifecycle node) — USB 拔插后自动重 activate
+#### Other
+- `auto_recover_on_reconnect` (bool, lifecycle node only) — auto re-activate after USB reconnect
 
 ---
 
-## 4. 服务
+## 4. Services
 
-| 服务 | 类型 | 用途 |
+| Service | Type | Purpose |
 |---|---|---|
-| `~/get_device_info` | `vxl_camera_msgs/GetDeviceInfo` | 设备名 / S/N / 固件版本 |
-| `~/get_option` | `vxl_camera_msgs/GetInt32` | 按 vxl_option_t ID 读值 |
-| `~/set_option` | `vxl_camera_msgs/SetInt32` | 按 ID 写值（绕过 ROS 参数依赖检查）|
-| `~/hw_reset` | `std_srvs/Trigger` | 硬件重启 |
+| `~/get_device_info` | `vxl_camera_msgs/GetDeviceInfo` | Device name / S/N / firmware |
+| `~/get_option` | `vxl_camera_msgs/GetInt32` | Read by `vxl_option_t` ID |
+| `~/set_option` | `vxl_camera_msgs/SetInt32` | Write by ID (bypasses ROS parameter dependency check) |
+| `~/hw_reset` | `std_srvs/Trigger` | Hardware reset |
 
 ```bash
 ros2 service call /vxl_camera/get_device_info vxl_camera_msgs/srv/GetDeviceInfo
@@ -157,111 +169,129 @@ ros2 service call /vxl_camera/hw_reset std_srvs/srv/Trigger
 
 ---
 
-## 5. Lifecycle 操作
+## 5. Lifecycle operations
 
-`vxl_camera_lifecycle_node` 启动默认自动 `configure → activate`。手动控制：
+`vxl_camera_lifecycle_node` auto-runs `configure → activate` on launch by
+default. To take manual control:
 
 ```bash
 ros2 launch vxl_camera vxl_camera_lifecycle.launch.py auto_activate:=false
-# 然后：
+# Then:
 ros2 lifecycle list /vxl_camera
 ros2 lifecycle set /vxl_camera configure
 ros2 lifecycle set /vxl_camera activate
-ros2 lifecycle set /vxl_camera deactivate    # 暂停采集，节点保留
-ros2 lifecycle set /vxl_camera activate      # 恢复
-ros2 lifecycle set /vxl_camera cleanup       # 关闭设备，回 UNCONFIGURED
+ros2 lifecycle set /vxl_camera deactivate    # pause streaming, keep node alive
+ros2 lifecycle set /vxl_camera activate      # resume
+ros2 lifecycle set /vxl_camera cleanup       # close device, back to UNCONFIGURED
 ```
 
-USB 拔出时节点自动 → INACTIVE，重新插入 → 自动回 ACTIVE（受 `auto_recover_on_reconnect` 控制）。
+When the USB cable is unplugged the node automatically transitions to
+INACTIVE; reconnecting the device triggers automatic re-activation
+(governed by `auto_recover_on_reconnect`).
 
-发布的状态话题：
-- `~/connection_state` (`std_msgs/String`) — `ACTIVE/CONNECTED` / `INACTIVE/DISCONNECTED` 等
+State topic:
+- `~/connection_state` (`std_msgs/String`) — values like
+  `ACTIVE/CONNECTED`, `INACTIVE/DISCONNECTED`
 
 ---
 
-## 6. 多相机
+## 6. Multi-camera
 
 ```bash
-# 多进程（隔离最强）
+# Multi-process (maximum isolation)
 ros2 launch vxl_camera multi_camera.launch.py \
   serial_1:=VXL435_001 serial_2:=VXL615_002
 
-# 同进程 ComposableNodeContainer（intra-process 零拷贝）
+# Single-process ComposableNodeContainer (intra-process zero-copy)
 ros2 launch vxl_camera multi_camera_composable.launch.py \
   serial_1:=VXL435_001 serial_2:=VXL615_002
 ```
 
-每相机独立 namespace（`/camera_1/...`、`/camera_2/...`）+ TF 前缀（`cam1_*` / `cam2_*`）。
+Each camera lives in its own namespace (`/camera_1/...`, `/camera_2/...`)
+with TF prefix (`cam1_*` / `cam2_*`).
 
-混搭不同型号时，复制 `config/vxl435.yaml` / `config/vxl615.yaml` 到工作区改一改，launch 里 `parameters: [...]` 替换。
+To mix SKUs, copy `config/vxl435.yaml` / `config/vxl615.yaml` into your own
+workspace, edit, then point each launch's `parameters: [...]` at your file.
 
 ---
 
-## 7. 诊断
+## 7. Diagnostics
 
-`/diagnostics` (1 Hz) 包含：
-- 每流实测 fps + 期望 fps（low fps 触发 WARN）
-- 设备名 / 序列号 / 固件 / 连接状态
+`/diagnostics` (1 Hz) carries:
+- Per-stream measured fps + expected fps (low fps triggers WARN)
+- Device name / serial / firmware / connection state
 - output_mode
 
 ```bash
 ros2 topic echo /diagnostics --once
-# 或图形化
+# Or graphical:
 rqt_robot_monitor
 ```
 
 ---
 
-## 8. 常见问题
+## 8. Troubleshooting
 
 ### `No VxlSense device found`
-设备没识别。检查：
+Device not enumerated. Check:
 ```bash
 lsusb | grep -iE 'vxl|asvxl|0567'
-ls -l /dev/bus/usb/  # 权限
+ls -l /dev/bus/usb/  # permissions
 ```
-如果有设备但没权限，装 udev rule：`scripts/99-vxl-cameras.rules`（在 vxlsdk 仓库里）。
+If the device is listed but inaccessible, install the udev rule:
+`scripts/99-vxl-cameras.rules` (lives in the vxlsdk repo).
 
-### `Filter chain: off` 但我开了 hole_filling
-检查参数实际值：`ros2 param get /vxl_camera filters.hole_filling.enabled`。如果是 false，可能 launch 文件里 yaml 优先级覆盖了你的 set。yaml 加载在 launch 时一次性发生。
+### Log says `Filter chain: off` but I enabled hole_filling
+Verify the actual parameter value:
+`ros2 param get /vxl_camera filters.hole_filling.enabled`. If it's still
+false, the YAML in your launch file probably overrides your set call —
+YAML files are loaded once at launch.
 
-### auto_exposure 拒绝设 manual
-看第 3 节的「互斥保护」。同批次设置或先关 auto。
+### auto_exposure rejects manual values
+See section 3, "Mutual-exclusion guard". Set both atomically or disable
+auto first.
 
-### VXL615 上 device 滤镜没效果
-确认 launch 用的是 `vxl615.launch.py`（VXL435 launch 不会启用 device 滤镜）。再确认参数：
+### Device-side filters have no effect on VXL615
+Make sure you launched with `vxl615.launch.py` (the VXL435 launch leaves
+device filters off). Confirm via:
 ```bash
 ros2 param get /vxl_camera filters.device.denoise.enabled
 ```
 
-### 深度对齐看起来不对
-检查 `align_depth.scale` 是否匹配设备：VXL435=1.0、VXL615=8.0、VXL605=16.0。用产品 launch 自动是对的；用通用 launch 要手动设。
+### Aligned depth looks wrong
+Check `align_depth.scale` matches the device: VXL435=1.0, VXL615=8.0,
+VXL605=16.0. The product-specific launches set this for you; the generic
+launches don't.
 
-### 怎么校验环境
+### How to verify the environment end-to-end
 ```bash
-./scripts/smoke_test_real.sh           # 默认 rgbd 15s
-./scripts/smoke_test_real.sh --align   # 加深度对齐
+./scripts/smoke_test_real.sh           # default: rgbd, 15s
+./scripts/smoke_test_real.sh --align   # also exercise depth-to-color
 ./scripts/smoke_test_real.sh --duration 60
 ```
 
 ---
 
-## 9. 编译/运行环境
+## 9. Build / runtime environments
 
-| 平台 | 路径 |
+| Platform | Path |
 |---|---|
-| **Linux 真机** | Ubuntu 22.04 + ROS Humble apt install（推荐生产）|
-| **macOS 开发** | Lima VM (Ubuntu 22.04 ARM64) — 见 `docs/DEV_VM.md` |
-| **macOS 原生** | 不支持 ROS2 Tier 1，**不要走这条线** |
+| **Linux native** | Ubuntu 22.04 + ROS Humble via apt install (production-recommended) |
+| **macOS dev** | Lima VM (Ubuntu 22.04 ARM64) — see `docs/DEV_VM.md` |
+| **macOS native** | Not a ROS 2 Tier 1 platform — **don't go this route** |
 
-构建：
+Build:
 ```bash
-# 假设 vxlsdk 在 ../vxlsdk 已编译
+# Assumes vxlsdk in ../vxlsdk has been built
 colcon build --packages-select vxl_camera_msgs vxl_camera vxl_description
 ```
 
 ---
 
-## 一句话总结
+## TL;DR
 
-**默认开 `vxl<型号>.launch.py`，缺什么 `ros2 param set` 改，要稳定就用 `vxl_camera_lifecycle_node` 系列 launch。** 现在所有改动都进 102 个单测覆盖，但**还没有真机小时数**——上线前请跑 `smoke_test_real.sh`。
+**Default to `vxl<sku>.launch.py`, change anything you need with
+`ros2 param set`, and use the `vxl_camera_lifecycle_node` launches in
+production for hotplug recovery.** All current behavior is covered by
+102 unit tests, but the project has **zero real-device hours yet** — run
+`smoke_test_real.sh` against hardware before deploying.
