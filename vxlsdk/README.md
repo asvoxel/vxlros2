@@ -1,6 +1,6 @@
-# VxlSense SDK
+# ASVXL SDK (placeholder)
 
-This directory is a placeholder for the VxlSense SDK. **It is the lowest-priority fallback** —
+This directory is a placeholder for the ASVXL SDK. **It is the lowest-priority fallback** —
 in normal development you don't put anything here.
 
 ## SDK discovery (in priority order)
@@ -55,4 +55,4 @@ vxlsdk/
 └── README.md (this file)
 ```
 
-Releases: https://github.com/asvoxel/VxlSense/releases
+Releases: https://github.com/asvoxel/vxlsdk-rel/releases

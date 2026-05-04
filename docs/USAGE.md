@@ -232,7 +232,7 @@ rqt_robot_monitor
 
 ## 8. Troubleshooting
 
-### `No VxlSense device found`
+### `No ASVXL camera found`
 Device not enumerated. Check:
 ```bash
 lsusb | grep -iE 'vxl|asvxl|0567'

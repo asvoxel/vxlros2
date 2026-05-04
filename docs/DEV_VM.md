@@ -118,7 +118,7 @@ limactl start ros-humble
 |---|---|
 | `limactl start` 卡在 "Updating images" | 网络慢，等下载完；或用代理 `HTTPS_PROXY=... limactl start` |
 | VM 内看不到 `~/Workspace` 写权限 | 检查 `scripts/ros-humble.yaml` 的 `mounts` writable: true |
-| 编译时 `VxlSense SDK not found` | 先在 VM 里跑 `cd ~/Workspace/asVoxel/vxlsdk && ./scripts/release-linux.sh` |
+| 编译时 `ASVXL SDK not found` | 先在 VM 里跑 `cd ~/Workspace/asVoxel/vxlsdk && ./scripts/release-linux.sh` |
 | `colcon build` 卡死 | 资源不够；`limactl edit ros-humble` 加 CPU/RAM |
 | Mac 上改了文件 VM 没看到 | virtiofs 偶尔有缓存问题；`limactl restart ros-humble` 或 `sync` |
 | GUI 工具启动报 `cannot open display` | XQuartz 没启动或没装；按上面 GUI 章节配 |

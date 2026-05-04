@@ -1,6 +1,6 @@
 # VxlROS2
 
-ROS2 driver for [VxlSense](https://github.com/asvoxel/VxlSense) depth cameras.
+ROS2 driver for [ASVXL](https://github.com/asvoxel/vxlsdk-rel) (VXL435 / VXL6X5) depth cameras.
 
 > Chinese documentation: [docs/README_zh.md](docs/README_zh.md)
 
@@ -20,7 +20,7 @@ ROS2 driver for [VxlSense](https://github.com/asvoxel/VxlSense) depth cameras.
 ## Prerequisites
 
 - ROS2 Humble or later
-- VxlSense SDK ([releases](https://github.com/asvoxel/VxlSense/releases))
+- ASVXL SDK ([releases](https://github.com/asvoxel/vxlsdk-rel/releases))
 
 ### Install ROS2 Dependencies
 
@@ -34,7 +34,10 @@ sudo apt install \
   ros-humble-robot-state-publisher
 ```
 
-### Install VxlSense SDK
+### Install ASVXL SDK
+
+> The in-repo `vxlsdk/` directory is an empty placeholder — you must populate
+> it via Option A or B below before `colcon build` will succeed.
 
 **Option A — Build from sibling `vxlsdk` source (recommended for development):**
 
@@ -48,8 +51,8 @@ cd ../vxlsdk
 **Option B — Extract a release tarball:**
 
 ```bash
-cd VxlROS2/vxlsdk/
-wget https://github.com/asvoxel/VxlSense/releases/download/vX.Y.Z/asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz
+cd vxlros2/vxlsdk/
+wget https://github.com/asvoxel/vxlsdk-rel/releases/download/vX.Y.Z/asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz
 tar xzf asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz --strip-components=1
 
 # Verify
@@ -62,9 +65,9 @@ ls include/vxl.hpp lib/linux/libasvxl.a
 mkdir -p ~/vxlros2_ws/src && cd ~/vxlros2_ws/src
 
 # Symlink packages (or copy)
-ln -s /path/to/VxlROS2/vxl_camera_msgs .
-ln -s /path/to/VxlROS2/vxl_camera .
-ln -s /path/to/VxlROS2/vxl_description .
+ln -s /path/to/vxlros2/vxl_camera_msgs .
+ln -s /path/to/vxlros2/vxl_camera .
+ln -s /path/to/vxlros2/vxl_description .
 
 cd ~/vxlros2_ws
 source /opt/ros/humble/setup.bash
@@ -75,7 +78,7 @@ colcon build --packages-select vxl_camera vxl_description && source install/setu
 **Custom SDK path** (optional):
 
 ```bash
-colcon build --cmake-args -DVXL_SDK_DIR=/opt/vxlsense/sdk
+colcon build --cmake-args -DVXL_SDK_DIR=/opt/vxlsdk/sdk
 ```
 
 SDK path priority: CMake arg > `VXL_SDK_DIR` env var > sibling `../vxlsdk/sdk/current/` > in-repo `vxlsdk/`
@@ -236,7 +239,7 @@ device supports are declared. `ros2 param describe <name>` shows the SDK range.
 ## Package Structure
 
 ```
-VxlROS2/
+vxlros2/
 ├── vxlsdk/                # SDK placeholder (fallback for release tarball)
 ├── vxl_camera/             # Main driver node
 ├── vxl_camera_msgs/        # Custom messages and services

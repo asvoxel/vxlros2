@@ -36,7 +36,7 @@
 namespace vxl_camera
 {
 
-// Lifecycle-managed VxlSense camera driver with USB hotplug auto-recovery.
+// Lifecycle-managed ASVXL camera driver with USB hotplug auto-recovery.
 //
 // State map (rclcpp_lifecycle):
 //   UNCONFIGURED → INACTIVE → ACTIVE

@@ -2,8 +2,8 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>vxl_camera</name>
-  <version>0.1.0</version>
-  <description>VxlSense depth camera ROS2 driver</description>
+  <version>0.1.4</version>
+  <description>ASVXL (VXL435 / VXL6X5) depth camera ROS2 driver</description>
   <maintainer email="dev@asvoxel.com">asvoxel</maintainer>
   <license>Apache-2.0</license>
 

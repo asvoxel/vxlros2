@@ -1,13 +1,13 @@
 # Hardware-in-the-Loop (HiL) CI Setup
 
 The `.github/workflows/hil.yml` workflow runs the integration test suite
-against a real VxlSense camera. It targets a self-hosted runner labeled
+against a real ASVXL camera. It targets a self-hosted runner labeled
 `vxl-hardware`. This document describes the one-time setup.
 
 ## Prerequisites for the runner machine
 
 - Ubuntu 22.04 (Humble) or 24.04 (Jazzy)
-- USB 3.0+ port with a VxlSense camera permanently connected
+- USB 3.0+ port with a ASVXL camera permanently connected
 - Network access to `github.com` for repo checkout and Actions communication
 - Stable power (the test takes ~20 min; the camera should not drop out mid-run)
 
@@ -111,7 +111,7 @@ Test results upload as the `hil-logs-<run_id>` artifact on every run
 
 | Symptom | Likely cause |
 |---|---|
-| `No VxlSense USB device detected` | Camera disconnected or kernel reset; replug |
+| `No ASVXL USB device detected` | Camera disconnected or kernel reset; replug |
 | `Permission denied /dev/bus/usb/...` | udev rule not applied or user not in `plugdev` |
 | Test times out at "Waiting for RGBD topic" | SDK can't open device; check `dmesg` for USB errors |
-| `VxlSense library not found` | `VXL_SDK_DIR` env var not set or path stale |
+| `ASVXL library not found` | `VXL_SDK_DIR` env var not set or path stale |

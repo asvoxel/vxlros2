@@ -1,12 +1,12 @@
 # VxlROS2
 
-VxlSense SDK 的 ROS2 封装，将 VxlSense 深度相机集成到 ROS2 生态系统中。
+ASVXL SDK 的 ROS2 封装，将 VXL435 / VXL6X5 深度相机集成到 ROS2 生态系统中。
 
 ## 项目结构
 
 ```
 VxlROS2/
-├── vxlsdk/              # VxlSense SDK 占位目录（兜底来源；正常开发用同级 vxlsdk 项目）
+├── vxlsdk/              # ASVXL SDK 占位目录（兜底来源；正常开发用同级 vxlsdk 项目）
 ├── vxl_camera/          # 主节点包 (C++)
 ├── vxl_camera_msgs/     # 自定义消息/服务定义
 ├── vxl_description/     # URDF 模型描述
@@ -21,7 +21,7 @@ VxlROS2/
 - **节点架构**: 必须使用 rclcpp_components 组件化节点，支持 intra-process 零拷贝
 - **SDK 依赖**: 优先使用同级 `../vxlsdk/` 项目编译产物（`vxlsdk/sdk/current/`）；也可解压发行包到 `vxlros2/vxlsdk/`
 - **SDK 路径优先级**: CMake 参数 > 环境变量 `VXL_SDK_DIR` > 同级 `../../vxlsdk/sdk/current/` > 项目内 `../vxlsdk/`
-- **API 统一**: 全部使用 VxlSense C++ API (vxl.hpp)，禁止直接调用 C API
+- **API 统一**: 全部使用 ASVXL C++ API (vxl.hpp)，禁止直接调用 C API
 
 ## 编码规范
 
@@ -34,9 +34,9 @@ VxlROS2/
 ## 关键设计决策
 
 1. **单节点多传感器**: 一个节点管理一个设备的所有传感器 (color/depth/ir)
-2. **帧同步**: 使用 VxlSense Pipeline API 的 SyncMode 进行硬件级同步
+2. **帧同步**: 使用 ASVXL Pipeline API 的 SyncMode 进行硬件级同步
 3. **输出模式**: 默认 RGBD 或 RGB+Depth 两种模式，IR/单流等仅供调测
-4. **参数系统**: 通过 ROS2 动态参数暴露 VxlSense 选项，支持运行时调整
+4. **参数系统**: 通过 ROS2 动态参数暴露 ASVXL 选项，支持运行时调整
 5. **资源释放顺序**: Stream → Sensor → Device → Context，严格遵守
 6. **双节点变体**: 同时提供两个组件入口
    - `vxl_camera::VxlCameraNode` (executable: `vxl_camera_node`) — 非 lifecycle，启动即工作
@@ -58,6 +58,6 @@ colcon test --packages-select vxl_camera
 
 ## 参考
 
-- 竞品 ROS2 集成: `../VxlSense/comps/{orbbec,realsense,stereolabs}`
-- VxlSense SDK API: `vxlsdk/include/vxl*.hpp`（或同级项目源码 `../vxlsdk/include/vxl*.hpp`）
-- SDK 发行包: https://github.com/asvoxel/VxlSense/releases
+- 竞品 ROS2 集成: `3rds/{orbbec_ros2, realsense_ros, zed_ros2_wrapper}`
+- ASVXL SDK API: `vxlsdk/include/vxl*.hpp`（或同级项目源码 `../vxlsdk/include/vxl*.hpp`）
+- SDK 发行包: https://github.com/asvoxel/vxlsdk-rel/releases

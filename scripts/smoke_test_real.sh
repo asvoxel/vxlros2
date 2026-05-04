@@ -52,12 +52,12 @@ fi
 g "vxl_camera package available"
 
 if ! lsusb 2>/dev/null | grep -qiE 'vxl|asvxl|0567'; then
-  e "No VxlSense device detected via lsusb. Check USB connection."
+  e "No ASVXL device detected via lsusb. Check USB connection."
   echo "lsusb output:" >&2
   lsusb >&2
   exit 1
 fi
-g "VxlSense device detected"
+g "ASVXL device detected"
 
 # ─── Launch the node in background ───────────────────────────────────────────
 i "Launching vxl_camera_lifecycle_node (output_mode=$MODE)"

@@ -1,10 +1,10 @@
 name: Hardware-in-the-Loop
 
-# Runs the integration test suite against a real VxlSense camera attached to a
+# Runs the integration test suite against a real ASVXL camera attached to a
 # self-hosted runner. The runner must be labeled `vxl-hardware` and have:
 #   - ROS 2 Humble installed at /opt/ros/humble
 #   - The udev rule from scripts/99-vxl-cameras.rules
-#   - A VxlSense camera plugged in
+#   - A ASVXL camera plugged in
 #   - Network access to GitHub for repo checkout
 #
 # See docs/HIL_SETUP.md for runner registration instructions.
@@ -40,7 +40,7 @@ jobs:
           # Fail fast if no device is reachable.
           set -e
           lsusb | grep -i -E "vxl|asvoxel" || {
-            echo "::error::No VxlSense USB device detected on this runner";
+            echo "::error::No ASVXL USB device detected on this runner";
             exit 1;
           }
 

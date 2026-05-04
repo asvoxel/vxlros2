@@ -165,7 +165,7 @@ void VxlCameraNode::initDevice()
   std::string serial = get_parameter("device_serial").as_string();
   if (!backend_->open(serial)) {
     throw std::runtime_error(
-      serial.empty() ? "No VxlSense device found" : "Device not found: " + serial);
+      serial.empty() ? "No ASVXL camera found" : "Device not found: " + serial);
   }
 
   auto info = backend_->getDeviceInfo();

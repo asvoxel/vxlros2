@@ -1,6 +1,6 @@
 // Node-level tests for VxlCameraNode using MockCameraBackend.
 // Verifies parameter callback routing, service handlers, and frame plumbing
-// without requiring a real VxlSense device.
+// without requiring a real ASVXL camera.
 
 #include <gtest/gtest.h>
 #include <rclcpp/rclcpp.hpp>

@@ -11,7 +11,7 @@
 │  └──────┬──────┘  └──────────────┘  └───────────────┘│
 │         │ C++ API (vxl.hpp)                           │
 │  ┌──────┴──────────────────────────┐                  │
-│  │    VxlSense SDK (libasvxl.a)    │                  │
+│  │     ASVXL SDK (libasvxl.a)      │                  │
 │  │  Context → Device → Pipeline    │                  │
 │  │          → FrameSet → Frame     │                  │
 │  └─────────────────────────────────┘                  │
@@ -119,7 +119,7 @@ class VxlCameraNode : public rclcpp::Node {
   // 帧回调（由 StreamManager poll 线程调用）
   framesetCallback(frameset);  // 按 output_mode 分发到对应 publish 方法
 
-  // VxlSense 对象
+  // ASVXL 对象
   vxl::ContextPtr context_;
   vxl::DevicePtr device_;
   std::unique_ptr<StreamManager> stream_manager_;
@@ -249,7 +249,7 @@ Option 服务按 ID 范围自动路由到对应传感器：`<100` → Color，`>
 
 **结论：N/A，不需要 ROS2 层硬件解码器集成。**
 
-调研发现：VxlSense SDK 在 `lib/{linux,darwin,windows}/libasvxl.a` 内部已通过 libuvc 完成 MJPEG/H264 → 原始像素的解码（参见 `vxl_frame.h:vxl_frame_convert`）。Frame 到达 ROS2 节点时已经是 BGR/RGB/Gray8/Z16 等可直接使用的格式。
+调研发现：ASVXL SDK 在 `lib/{linux,darwin,windows}/libasvxl.a` 内部已通过 libuvc 完成 MJPEG/H264 → 原始像素的解码（参见 `vxl_frame.h:vxl_frame_convert`）。Frame 到达 ROS2 节点时已经是 BGR/RGB/Gray8/Z16 等可直接使用的格式。
 
 如果未来需求变化（例如 SDK 暴露原始压缩流）：
 - 在 `vxl_camera_node` 与 SDK 之间引入 `IDecoder` 抽象层（CPU 后备 + NVDEC/VAAPI 实现）

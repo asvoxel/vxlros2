@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-// Abstraction over the VxlSense SDK so node logic can be unit-tested without
+// Abstraction over the ASVXL SDK so node logic can be unit-tested without
 // real hardware. The SdkCameraBackend implementation wraps Context+Device+
 // Pipeline+StreamManager; MockCameraBackend provides controllable in-memory
 // behavior for tests.
@@ -126,7 +126,7 @@ public:
 
 using CameraBackendPtr = std::shared_ptr<ICameraBackend>;
 
-// Factory for the production backend wired to the real VxlSense SDK.
+// Factory for the production backend wired to the real ASVXL SDK.
 CameraBackendPtr makeSdkCameraBackend();
 
 }  // namespace vxl_camera

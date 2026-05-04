@@ -1,7 +1,7 @@
 """
 Integration test launch file.
 Starts VxlCameraNode and verifies topics are published.
-Requires a connected VxlSense device — skip locally if absent.
+Requires a connected ASVXL camera — skip locally if absent.
 """
 import os
 import unittest
@@ -46,7 +46,7 @@ def generate_test_description():
 
 
 class TestVxlCameraIntegration(unittest.TestCase):
-    """Integration tests - require a connected VxlSense device."""
+    """Integration tests - require a connected ASVXL camera."""
 
     @classmethod
     def setUpClass(cls):

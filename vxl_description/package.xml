@@ -2,8 +2,8 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>vxl_description</name>
-  <version>0.1.0</version>
-  <description>URDF description for VxlSense cameras</description>
+  <version>0.1.4</version>
+  <description>URDF description for ASVXL (VXL435 / VXL6X5) cameras</description>
   <maintainer email="dev@asvoxel.com">asvoxel</maintainer>
   <license>Apache-2.0</license>
 

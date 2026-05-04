@@ -29,7 +29,7 @@ std::optional<OutputMode> parseOutputMode(std::string_view s);
 // Inverse mapping — useful for diagnostics output and tests.
 std::string outputModeToString(OutputMode mode);
 
-// Map a VxlSense pixel format to a ROS sensor_msgs encoding string.
+// Map an ASVXL pixel format to a ROS sensor_msgs encoding string.
 // Returns std::nullopt for formats that need conversion (MJPEG, H264, NV12, ...).
 std::optional<std::string> vxlFormatToRosEncoding(vxl::Format fmt);
 

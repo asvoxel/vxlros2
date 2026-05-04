@@ -1,6 +1,6 @@
 """Multi-camera launch — separate processes (independent crash isolation).
 
-Each camera runs in its own process with its own VxlSense Context. Use this for
+Each camera runs in its own process with its own ASVXL Context. Use this for
 maximum isolation; for intra-process zero-copy use multi_camera_composable.launch.py.
 
 Each node binds to a specific device by serial number and namespaces all topics

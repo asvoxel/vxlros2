@@ -1,4 +1,4 @@
-// Tests for SdkCameraBackend that don't require a real VxlSense device.
+// Tests for SdkCameraBackend that don't require a real ASVXL camera.
 // On CI without USB hardware, the SDK initializes a context successfully but
 // device enumeration is empty — all device-dependent paths return "not found"
 // or skip the test.

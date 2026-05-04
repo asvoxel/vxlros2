@@ -28,8 +28,8 @@ it on failure for triage.
 
 ## What it checks
 
-1. **Pre-flight** — `ROS_DISTRO` set, `vxl_camera` installed, `lsusb` lists a
-   VxlSense device.
+1. **Pre-flight** — `ROS_DISTRO` set, `vxl_camera` installed, `lsusb` lists an
+   ASVXL device.
 2. **Launch** — `vxl_camera_lifecycle_node` starts and reaches ACTIVE within 10 s.
 3. **Topic rates** — for each expected topic in the chosen mode, average Hz
    over a 5-message rolling window must hit a minimum threshold:

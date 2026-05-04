@@ -27,7 +27,7 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(lifecycle_msgs REQUIRED)
 find_package(vxl_camera_msgs REQUIRED)
 
-# ─── VxlSense SDK ────────────────────────────────────────────────────────────
+# ─── ASVXL SDK ───────────────────────────────────────────────────────────────
 #
 # SDK discovery priority:
 #   1. cmake -DVXL_SDK_DIR=/path/to/sdk   (CI / custom builds)
@@ -51,13 +51,13 @@ message(STATUS "VXL SDK dir: ${VXL_SDK_DIR}")
 # Validate SDK — must contain both C and C++ API headers
 if(NOT EXISTS "${VXL_SDK_DIR}/include/vxl.hpp")
   message(FATAL_ERROR
-    "VxlSense SDK not found at: ${VXL_SDK_DIR}\n"
+    "ASVXL SDK not found at: ${VXL_SDK_DIR}\n"
     "Provide the SDK in one of these ways:\n"
     "  1. Build the sibling vxlsdk project:\n"
     "       cd ../../vxlsdk && ./scripts/release-{linux,macos}.sh\n"
     "     Output is symlinked at vxlsdk/sdk/current/ and picked up automatically.\n"
     "  2. Extract a release tarball into ${CMAKE_CURRENT_SOURCE_DIR}/../vxlsdk/\n"
-    "       (download from https://github.com/asvoxel/VxlSense/releases)\n"
+    "       (download from https://github.com/asvoxel/vxlsdk-rel/releases)\n"
     "  3. Pass an explicit path: -DVXL_SDK_DIR=/your/path\n"
     "     (or export VXL_SDK_DIR=/your/path)")
 endif()
@@ -77,7 +77,7 @@ set(VXL_LIB_DIR "${VXL_SDK_DIR}/lib/${VXL_PLATFORM}")
 find_library(VXL_LIBRARY NAMES asvxl vxl PATHS ${VXL_LIB_DIR} NO_DEFAULT_PATH)
 
 if(NOT VXL_LIBRARY)
-  message(FATAL_ERROR "VxlSense library not found in ${VXL_LIB_DIR}")
+  message(FATAL_ERROR "ASVXL library not found in ${VXL_LIB_DIR}")
 endif()
 
 # libasvxl.a is a static archive that wraps libuvc + libusb-1.0 calls but does
@@ -116,8 +116,8 @@ if(VXL_PLATFORM STREQUAL "linux")
 endif()
 
 # Create proper imported target for IDE support and transitive deps
-add_library(VxlSense::asvxl STATIC IMPORTED)
-set_target_properties(VxlSense::asvxl PROPERTIES
+add_library(vxlsdk::asvxl STATIC IMPORTED)
+set_target_properties(vxlsdk::asvxl PROPERTIES
   IMPORTED_LOCATION "${VXL_LIBRARY}"
   INTERFACE_INCLUDE_DIRECTORIES "${VXL_INCLUDE_DIR}"
   INTERFACE_LINK_LIBRARIES "${VXL_TRANSITIVE_LIBS}"
@@ -145,9 +145,9 @@ target_include_directories(vxl_camera_component PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-# VxlSense headers are provided via VxlSense::asvxl imported target
+# ASVXL headers are provided via vxlsdk::asvxl imported target
 
-target_link_libraries(vxl_camera_component VxlSense::asvxl)
+target_link_libraries(vxl_camera_component vxlsdk::asvxl)
 
 ament_target_dependencies(vxl_camera_component
   rclcpp

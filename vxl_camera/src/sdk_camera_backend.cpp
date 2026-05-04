@@ -219,7 +219,7 @@ public:
     }
 
     // Device-side options on the depth sensor (silently no-op if the connected
-    // device doesn't expose them, e.g. VXL435 ignores VXL615_OPTION_*).
+    // device doesn't expose them, e.g. VXL435 ignores VXL6X5_OPTION_*).
     if (!device_) {return;}
     auto trySet = [this](vxl_option_t opt, float val) {
         try {
@@ -230,19 +230,16 @@ public:
           // Best-effort — don't break the stream over a single bad option.
         }
       };
-    // NOTE: SDK 1.1.6 ships these as VXL615_OPTION_* (named after the first
-    // SKU in the family); a later SDK rename to VXL6X5_OPTION_* is planned.
-    // Keep an eye on this when bumping the SDK pin in vxlros2/vxlsdk/.
-    trySet(VXL615_OPTION_DENOISE_ENABLE, chain.device.denoise.enabled ? 1.0f : 0.0f);
+    trySet(VXL6X5_OPTION_DENOISE_ENABLE, chain.device.denoise.enabled ? 1.0f : 0.0f);
     if (chain.device.denoise.enabled) {
-      trySet(VXL615_OPTION_DENOISE_LEVEL, static_cast<float>(chain.device.denoise.level));
+      trySet(VXL6X5_OPTION_DENOISE_LEVEL, static_cast<float>(chain.device.denoise.level));
     }
-    trySet(VXL615_OPTION_MEDIAN_FILTER, chain.device.median.enabled ? 1.0f : 0.0f);
+    trySet(VXL6X5_OPTION_MEDIAN_FILTER, chain.device.median.enabled ? 1.0f : 0.0f);
     if (chain.device.median.enabled) {
-      trySet(VXL615_OPTION_MEDIAN_KERNEL_SIZE,
+      trySet(VXL6X5_OPTION_MEDIAN_KERNEL_SIZE,
         static_cast<float>(chain.device.median.kernel_size));
     }
-    trySet(VXL615_OPTION_OUTLIER_REMOVAL,
+    trySet(VXL6X5_OPTION_OUTLIER_REMOVAL,
       chain.device.outlier_removal.enabled ? 1.0f : 0.0f);
   }
 

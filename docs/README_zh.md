@@ -1,6 +1,6 @@
 # VxlROS2 中文文档
 
-[VxlSense](https://github.com/asvoxel/VxlSense) 深度相机的 ROS2 驱动。
+[ASVXL](https://github.com/asvoxel/vxlsdk-rel) (VXL435 / VXL6X5) 深度相机的 ROS2 驱动。
 
 > English: [../README.md](../README.md)
 
@@ -16,7 +16,7 @@
 ## 环境要求
 
 - ROS2 Humble 或更高版本
-- VxlSense SDK ([下载](https://github.com/asvoxel/VxlSense/releases))
+- ASVXL SDK ([下载](https://github.com/asvoxel/vxlsdk-rel/releases))
 
 ### 安装 ROS2 依赖
 
@@ -30,7 +30,10 @@ sudo apt install \
   ros-humble-robot-state-publisher
 ```
 
-### 安装 VxlSense SDK
+### 安装 ASVXL SDK
+
+> 仓库内的 `vxlsdk/` 是空的占位目录 —— 必须先按下面方式一或方式二把 SDK
+> 准备好，`colcon build` 才能成功。
 
 **方式一 — 从同级 `vxlsdk` 源码项目编译（开发推荐）：**
 
@@ -44,8 +47,8 @@ cd ../vxlsdk
 **方式二 — 解压 SDK 发行包：**
 
 ```bash
-cd VxlROS2/vxlsdk/
-wget https://github.com/asvoxel/VxlSense/releases/download/vX.Y.Z/asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz
+cd vxlros2/vxlsdk/
+wget https://github.com/asvoxel/vxlsdk-rel/releases/download/vX.Y.Z/asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz
 tar xzf asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz --strip-components=1
 
 # 验证
@@ -71,9 +74,9 @@ vxlsdk/
 mkdir -p ~/vxlros2_ws/src && cd ~/vxlros2_ws/src
 
 # 符号链接（开发推荐）或复制
-ln -s /path/to/VxlROS2/vxl_camera_msgs .
-ln -s /path/to/VxlROS2/vxl_camera .
-ln -s /path/to/VxlROS2/vxl_description .
+ln -s /path/to/vxlros2/vxl_camera_msgs .
+ln -s /path/to/vxlros2/vxl_camera .
+ln -s /path/to/vxlros2/vxl_description .
 
 # 编译
 cd ~/vxlros2_ws
@@ -86,10 +89,10 @@ colcon build --packages-select vxl_camera vxl_description && source install/setu
 
 ```bash
 # 方式一：CMake 参数
-colcon build --cmake-args -DVXL_SDK_DIR=/opt/vxlsense/sdk
+colcon build --cmake-args -DVXL_SDK_DIR=/opt/vxlsdk/sdk
 
 # 方式二：环境变量
-export VXL_SDK_DIR=/opt/vxlsense/sdk
+export VXL_SDK_DIR=/opt/vxlsdk/sdk
 colcon build
 ```
 
@@ -188,7 +191,7 @@ ros2 service call /vxl_camera/hw_reset std_srvs/srv/Trigger
 ## 项目结构
 
 ```
-VxlROS2/
+vxlros2/
 ├── vxlsdk/                # SDK 占位目录（兜底；优先用同级 ../vxlsdk 项目编译产物）
 ├── vxl_camera/             # 主驱动节点
 ├── vxl_camera_msgs/        # 自定义消息与服务
@@ -214,7 +217,7 @@ ros2 launch vxl_camera test/test_integration.launch.py
 ### SDK 找不到
 
 ```
-CMake Error: VxlSense SDK not found
+CMake Error: ASVXL SDK not found
 ```
 
 解决（任一）：

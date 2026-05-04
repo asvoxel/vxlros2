@@ -1,4 +1,4 @@
-"""Launch the VxlSense camera as a managed lifecycle node.
+"""Launch the ASVXL camera as a managed lifecycle node.
 
 By default the standalone executable auto-transitions through CONFIGURE → ACTIVATE.
 Pass `auto_activate:=false` to stay in UNCONFIGURED and let an external lifecycle
