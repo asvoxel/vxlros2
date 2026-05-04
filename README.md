@@ -4,6 +4,12 @@ ROS2 driver for [ASVXL](https://github.com/asvoxel/vxlsdk-rel) (VXL435 / VXL6X5)
 
 > Chinese documentation: [docs/README_zh.md](docs/README_zh.md)
 
+> [!NOTE]
+> **2026-05-04 — Git history was rewritten** to normalize commit author identity.
+> All commit hashes have changed. If you have an existing clone or fork, please
+> re-clone (or `git fetch && git reset --hard origin/main` on a clean checkout).
+> Old commit URLs and references will not resolve.
+
 ## Features
 
 - **RGBD output** — Synchronized RGB + Depth in a single topic (default)
