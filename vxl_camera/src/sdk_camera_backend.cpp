@@ -159,7 +159,11 @@ public:
     pipeline_->setFrameQueueSize(config.frame_queue_size);
 
     if (config.color_enabled) {
-      pipeline_->enableStream(vxl::SensorType::Color, vxl::Format::BGR,
+      // Format::Any lets the SDK pick the device's native profile (e.g. MJPEG
+      // on VXL615) instead of failing when no Profile{BGR, w, h, fps} exists.
+      // We convert to BGR in the framesetCallback before publishing so ROS
+      // consumers still get sensor_msgs::Image with bgr8 encoding.
+      pipeline_->enableStream(vxl::SensorType::Color, vxl::Format::Any,
         config.color_width, config.color_height, config.color_fps);
     }
     if (config.depth_enabled) {
@@ -270,6 +274,24 @@ private:
 
         auto raw_depth = frameset->getDepthFrame();
         auto color_frame = frameset->getColorFrame();
+
+        // ROS image_raw expects bgr8/rgb8/mono*/16UC1; if the device delivered
+        // a compressed/packed format (MJPEG, YUYV, …) ask the SDK to decode.
+        if (color_frame && color_frame->isValid()) {
+          auto fmt = color_frame->format();
+          if (fmt != vxl::Format::BGR && fmt != vxl::Format::RGB &&
+              fmt != vxl::Format::Gray8 && fmt != vxl::Format::Gray16)
+          {
+            try {
+              auto converted = color_frame->convert(vxl::Format::BGR);
+              if (converted && converted->isValid()) {color_frame = converted;}
+            } catch (const vxl::Error &) {
+              // Drop the unconvertible color frame; depth/IR can still publish.
+              color_frame.reset();
+            }
+          }
+        }
+
         vxl::FramePtr final_depth = raw_depth;
         if (filters && !filters->empty() && raw_depth && raw_depth->isValid()) {
           try {

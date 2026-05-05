@@ -2,8 +2,10 @@
 #
 # Product profile:
 #   - IR projector + NIR camera, structured light depth
-#   - Color: MJPEG, 1280×720 max @ 30 fps
-#   - Depth: Z16 with depth_scale = 8.0 (raw / 8 = mm)
+#   - Color: MJPEG, 1920×1080 @ 30 fps (only profile this device exposes;
+#     SDK decodes to BGR for the ROS image_raw topic)
+#   - Depth: Y16 native, 640×400/1280×800/320×200 @ 30 fps; depth_scale = 8.0
+#     (raw / 8 = mm)
 #   - Device-side post-processing available on the depth sensor — use them
 #     instead of host-side equivalents to save CPU.
 #
@@ -13,13 +15,13 @@
     output_mode: "rgbd"
 
     color:
-      width: 1280
-      height: 720
+      width: 1920
+      height: 1080
       fps: 30
 
     depth:
       width: 640
-      height: 480
+      height: 400
       fps: 30
 
     sync_mode: "strict"
