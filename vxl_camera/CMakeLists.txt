@@ -17,12 +17,9 @@ find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(camera_info_manager REQUIRED)
-find_package(cv_bridge REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(diagnostic_updater REQUIRED)
-find_package(diagnostic_msgs REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(lifecycle_msgs REQUIRED)
 find_package(vxl_camera_msgs REQUIRED)
@@ -159,12 +156,9 @@ ament_target_dependencies(vxl_camera_component
   std_msgs
   image_transport
   camera_info_manager
-  cv_bridge
   tf2_ros
   tf2
   geometry_msgs
-  diagnostic_updater
-  diagnostic_msgs
   vxl_camera_msgs
 )
 
@@ -198,6 +192,16 @@ install(TARGETS vxl_camera_lifecycle_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# Co-install libuvc shared lib so consumers find it via vxl_camera's install/lib
+# (ROS2 setup.bash adds that to LD_LIBRARY_PATH; binary RUNPATH alone is bypassed
+# by ROS2's LD_LIBRARY_PATH when transitively loaded through component .so).
+if(VXL_PLATFORM STREQUAL "linux")
+  file(GLOB VXL_LIBUVC_FILES "${VXL_LIB_DIR}/libuvc.so*")
+  if(VXL_LIBUVC_FILES)
+    install(FILES ${VXL_LIBUVC_FILES} DESTINATION lib)
+  endif()
+endif()
+
 install(DIRECTORY include/
   DESTINATION include
 )
@@ -220,7 +224,7 @@ if(BUILD_TESTING)
   ament_add_gtest(test_output_mode test/test_output_mode.cpp)
   target_link_libraries(test_output_mode vxl_camera_component)
   ament_target_dependencies(test_output_mode
-    rclcpp sensor_msgs vxl_camera_msgs diagnostic_msgs)
+    rclcpp sensor_msgs vxl_camera_msgs)
 
   ament_add_gtest(test_point_cloud test/test_point_cloud.cpp)
   target_link_libraries(test_point_cloud vxl_camera_component)

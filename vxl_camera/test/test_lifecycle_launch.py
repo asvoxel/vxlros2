@@ -16,7 +16,6 @@ from rclpy.node import Node as RclpyNode
 from rclpy.qos import QoSProfile, DurabilityPolicy, qos_profile_sensor_data
 
 from vxl_camera_msgs.msg import Metadata, Extrinsics
-from diagnostic_msgs.msg import DiagnosticArray
 from lifecycle_msgs.srv import GetState
 
 
@@ -95,21 +94,6 @@ class TestLifecycleLaunch(unittest.TestCase):
         self.assertGreater(len(received), 0, 'No latched extrinsics received')
         self.assertEqual(len(received[0].rotation), 9)
         self.assertEqual(len(received[0].translation), 3)
-
-    def test_diagnostics_published(self):
-        received = []
-        sub = self.node.create_subscription(
-            DiagnosticArray, '/diagnostics',
-            lambda m: received.append(m), 10)
-        # diagnostic_updater fires at 1 Hz; wait for ≥2 cycles.
-        self._spin_until(lambda: len(received) >= 2, timeout_s=4.0)
-        sub
-        self.assertGreaterEqual(len(received), 1, 'No /diagnostics messages received')
-        # Verify our entry is present and reports streaming.
-        all_status = [s for arr in received for s in arr.status]
-        vxl_status = [s for s in all_status if 'vxl_camera' in s.name]
-        self.assertGreater(len(vxl_status), 0,
-            f'No vxl_camera diagnostic status; saw: {[s.name for s in all_status]}')
 
     def test_color_exposure_param_settable(self):
         # The mock pre-registers VXL_OPTION_EXPOSURE — set should succeed end-to-end.

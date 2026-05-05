@@ -3,7 +3,6 @@
 #include "vxl_camera/frame_utils.hpp"
 #include "vxl_camera/filter_chain.hpp"
 
-#include <cv_bridge/cv_bridge.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 
@@ -29,7 +28,6 @@ VxlCameraNode::VxlCameraNode(const rclcpp::NodeOptions & options, CameraBackendP
     declareDynamicOptions();
     setupPublishers();
     setupServices();
-    setupDiagnostics();
 
     if (publish_tf_) {
       publishStaticTFs();
@@ -310,86 +308,6 @@ void VxlCameraNode::setupServices()
     "~/hw_reset",
     std::bind(&VxlCameraNode::onHwReset, this,
     std::placeholders::_1, std::placeholders::_2));
-}
-
-void VxlCameraNode::setupDiagnostics()
-{
-  diag_updater_ = std::make_shared<diagnostic_updater::Updater>(this);
-
-  std::string hw_id = "vxl_camera";
-  try {
-    auto info = backend_->getDeviceInfo();
-    hw_id = info.name + ":" + info.serial_number;
-  } catch (const std::exception &) {}
-  diag_updater_->setHardwareID(hw_id);
-
-  diag_updater_->add("vxl_camera",
-    std::bind(&VxlCameraNode::diagnosticsCallback, this, std::placeholders::_1));
-
-  // Trigger updates at 1 Hz; the wrapper handles the actual rate calculations.
-  auto now_tp = std::chrono::steady_clock::now();
-  color_stats_.last_sample_time = now_tp;
-  depth_stats_.last_sample_time = now_tp;
-  ir_stats_.last_sample_time = now_tp;
-
-  diag_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() {
-    diag_updater_->force_update();
-  });
-}
-
-void VxlCameraNode::diagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper & stat)
-{
-  std::lock_guard<std::mutex> lock(stats_mutex_);
-  auto now_tp = std::chrono::steady_clock::now();
-
-  auto report = [&](const char * name, StreamStats & s, int expected_fps) {
-    uint64_t cur = s.frames_published.load();
-    uint64_t prev = s.last_sample_count.load();
-    auto elapsed_s = std::chrono::duration<double>(now_tp - s.last_sample_time).count();
-    double fps = (elapsed_s > 0.001) ? (cur - prev) / elapsed_s : 0.0;
-    s.last_sample_count.store(cur);
-    s.last_sample_time = now_tp;
-
-    stat.add(std::string(name) + ".frames_published", cur);
-    stat.add(std::string(name) + ".fps", fps);
-    stat.add(std::string(name) + ".expected_fps", expected_fps);
-
-    // Flag if the actual rate falls below 50% of the configured rate while streaming.
-    // (Skip the warning during the first sample window where prev == 0.)
-    if (expected_fps > 0 && prev > 0 && fps > 0 && fps < expected_fps * 0.5) {
-      stat.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN,
-        std::string(name) + " fps below 50% of configured rate");
-    }
-  };
-
-  stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Streaming");
-
-  if (color_meta_pub_) {
-    report("color", color_stats_, get_parameter("color.fps").as_int());
-  }
-  if (depth_meta_pub_) {
-    report("depth", depth_stats_, get_parameter("depth.fps").as_int());
-  }
-  if (ir_meta_pub_) {
-    report("ir", ir_stats_, get_parameter("ir.fps").as_int());
-  }
-
-  // Device info
-  try {
-    auto info = backend_->getDeviceInfo();
-    stat.add("device.name", info.name);
-    stat.add("device.serial", info.serial_number);
-    stat.add("device.firmware", info.fw_version);
-    stat.add("device.connected", backend_->isOpen());
-    if (!backend_->isOpen()) {
-      stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "Device disconnected");
-    }
-  } catch (const std::exception & e) {
-    stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR,
-      std::string("Device query failed: ") + e.what());
-  }
-
-  stat.add("output_mode", get_parameter("output_mode").as_string());
 }
 
 void VxlCameraNode::startStreaming()

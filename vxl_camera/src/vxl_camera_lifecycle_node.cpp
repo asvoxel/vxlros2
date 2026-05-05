@@ -3,7 +3,6 @@
 #include "vxl_camera/frame_utils.hpp"
 #include "vxl_camera/filter_chain.hpp"
 
-#include <cv_bridge/cv_bridge.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 
@@ -44,7 +43,6 @@ VxlCameraLifecycleNode::on_configure(const State & /*previous*/)
     declareDynamicOptions();
     buildPublishers();
     buildServices();
-    buildDiagnostics();
     if (publish_tf_) {
       publishStaticTFs();
     }
@@ -153,8 +151,6 @@ VxlCameraLifecycleNode::on_cleanup(const State & /*previous*/)
 {
   RCLCPP_INFO(get_logger(), "on_cleanup");
   monitor_timer_.reset();
-  diag_timer_.reset();
-  diag_updater_.reset();
   shutdownDevice();
 
   // Drop publishers and services so they're recreated on the next on_configure.
@@ -426,35 +422,6 @@ void VxlCameraLifecycleNode::buildServices()
     "~/hw_reset",
     std::bind(&VxlCameraLifecycleNode::onHwReset, this,
     std::placeholders::_1, std::placeholders::_2));
-}
-
-void VxlCameraLifecycleNode::buildDiagnostics()
-{
-  diag_updater_ = std::make_shared<diagnostic_updater::Updater>(
-    get_node_base_interface(),
-    get_node_clock_interface(),
-    get_node_logging_interface(),
-    get_node_parameters_interface(),
-    get_node_timers_interface(),
-    get_node_topics_interface());
-
-  std::string hw_id = "vxl_camera";
-  try {
-    auto info = backend_->getDeviceInfo();
-    hw_id = info.name + ":" + info.serial_number;
-  } catch (const std::exception &) {}
-  diag_updater_->setHardwareID(hw_id);
-  diag_updater_->add("vxl_camera",
-    std::bind(&VxlCameraLifecycleNode::diagnosticsCallback, this, std::placeholders::_1));
-
-  auto now_tp = std::chrono::steady_clock::now();
-  color_stats_.last_sample_time = now_tp;
-  depth_stats_.last_sample_time = now_tp;
-  ir_stats_.last_sample_time = now_tp;
-
-  diag_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() {
-    diag_updater_->force_update();
-  });
 }
 
 void VxlCameraLifecycleNode::publishStaticTFs()
@@ -979,54 +946,6 @@ VxlCameraLifecycleNode::onParameterChange(const std::vector<rclcpp::Parameter> &
   }
 
   return result;
-}
-
-// ─── Diagnostics ─────────────────────────────────────────────────────────────
-
-void VxlCameraLifecycleNode::diagnosticsCallback(
-  diagnostic_updater::DiagnosticStatusWrapper & stat)
-{
-  std::lock_guard<std::mutex> lock(stats_mutex_);
-  auto now_tp = std::chrono::steady_clock::now();
-
-  auto report = [&](const char * name, StreamStats & s, int expected_fps) {
-    uint64_t cur = s.frames_published.load();
-    uint64_t prev = s.last_sample_count.load();
-    auto elapsed_s = std::chrono::duration<double>(now_tp - s.last_sample_time).count();
-    double fps = (elapsed_s > 0.001) ? (cur - prev) / elapsed_s : 0.0;
-    s.last_sample_count.store(cur);
-    s.last_sample_time = now_tp;
-
-    stat.add(std::string(name) + ".frames_published", cur);
-    stat.add(std::string(name) + ".fps", fps);
-    stat.add(std::string(name) + ".expected_fps", expected_fps);
-
-    if (expected_fps > 0 && prev > 0 && fps > 0 && fps < expected_fps * 0.5) {
-      stat.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN,
-        std::string(name) + " fps below 50% of configured rate");
-    }
-  };
-
-  auto state_id = get_current_state().id();
-  if (state_id == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
-    stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Streaming");
-  } else {
-    stat.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN,
-      std::string("Lifecycle state: ") +
-      (state_id == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE ? "INACTIVE" : "OTHER"));
-  }
-
-  if (color_meta_pub_) {report("color", color_stats_, get_parameter("color.fps").as_int());}
-  if (depth_meta_pub_) {report("depth", depth_stats_, get_parameter("depth.fps").as_int());}
-  if (ir_meta_pub_)    {report("ir",    ir_stats_,    get_parameter("ir.fps").as_int());}
-
-  stat.add("device.connected", device_present_.load());
-  stat.add("output_mode", get_parameter("output_mode").as_string());
-  try {
-    auto info = backend_->getDeviceInfo();
-    stat.add("device.name", info.name);
-    stat.add("device.serial", info.serial_number);
-  } catch (const std::exception &) {}
 }
 
 }  // namespace vxl_camera

@@ -12,7 +12,6 @@
 #include <image_transport/image_transport.hpp>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <std_srvs/srv/trigger.hpp>
-#include <diagnostic_updater/diagnostic_updater.hpp>
 
 #include <vxl_camera_msgs/msg/rgbd.hpp>
 #include <vxl_camera_msgs/msg/extrinsics.hpp>
@@ -30,7 +29,6 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
-#include <mutex>
 #include <string>
 
 namespace vxl_camera
@@ -81,7 +79,6 @@ private:
   void initDevice();
   void buildPublishers();
   void buildServices();
-  void buildDiagnostics();
   void publishStaticTFs();
   void startStream();
   void stopStream();
@@ -129,9 +126,6 @@ private:
   // Dynamic parameters
   rcl_interfaces::msg::SetParametersResult onParameterChange(
     const std::vector<rclcpp::Parameter> & params);
-
-  // Diagnostics
-  void diagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper & stat);
 
   // Backend abstraction (real SDK or mock for tests)
   CameraBackendPtr backend_;
@@ -184,20 +178,13 @@ private:
   // Parameter callback
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 
-  // Diagnostics
-  std::shared_ptr<diagnostic_updater::Updater> diag_updater_;
-  rclcpp::TimerBase::SharedPtr diag_timer_;
-
-  // Per-stream stats (for diagnostics)
+  // Per-stream frame counters
   struct StreamStats {
     std::atomic<uint64_t> frames_published{0};
-    std::atomic<uint64_t> last_sample_count{0};
-    std::chrono::steady_clock::time_point last_sample_time{};
   };
   StreamStats color_stats_;
   StreamStats depth_stats_;
   StreamStats ir_stats_;
-  std::mutex stats_mutex_;
 
   // Hotplug
   std::atomic<bool> device_present_{false};

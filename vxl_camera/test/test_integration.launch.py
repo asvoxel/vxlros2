@@ -18,7 +18,6 @@ import rclpy
 from rclpy.node import Node as RclpyNode
 from sensor_msgs.msg import Image
 from vxl_camera_msgs.msg import RGBD, Metadata, Extrinsics
-from diagnostic_msgs.msg import DiagnosticArray
 
 
 def generate_test_description():
@@ -111,17 +110,3 @@ class TestVxlCameraIntegration(unittest.TestCase):
         self._wait_for(lambda: len(received) > 0)
         sub
         self.assertGreater(len(received), 0, "No depth/metadata received within 10s")
-
-    def test_diagnostics_published(self):
-        """Verify diagnostic_updater publishes /diagnostics with our entry."""
-        received = []
-        sub = self.node.create_subscription(
-            DiagnosticArray, '/diagnostics',
-            lambda msg: received.append(msg), 10)
-        # Updater fires at 1Hz, give it a few cycles
-        self._wait_for(lambda: len(received) >= 2, timeout_s=5.0)
-        sub
-        self.assertGreater(len(received), 0, "No /diagnostics messages received")
-        names = {s.name for arr in received for s in arr.status}
-        self.assertTrue(any("vxl_camera" in n for n in names),
-            f"Expected 'vxl_camera' status; got {names}")

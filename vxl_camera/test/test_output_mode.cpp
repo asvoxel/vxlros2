@@ -3,7 +3,6 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <vxl_camera_msgs/msg/rgbd.hpp>
 #include <vxl_camera_msgs/msg/metadata.hpp>
-#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 
 #include <chrono>
 #include <memory>
@@ -145,16 +144,6 @@ TEST_F(OutputModeTest, MetadataMessageStructure)
   EXPECT_EQ(meta.frame_number, 42u);
   EXPECT_EQ(meta.exposure_us, 16000u);
   EXPECT_EQ(meta.gain, 128u);
-}
-
-TEST_F(OutputModeTest, DiagnosticsArrayCanBeSubscribed)
-{
-  // /diagnostics is published by diagnostic_updater::Updater. Verify subscription works.
-  auto node = std::make_shared<rclcpp::Node>("test_diag");
-  auto sub = node->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
-    "/diagnostics", 10,
-    [](const diagnostic_msgs::msg::DiagnosticArray::SharedPtr) {});
-  EXPECT_NE(sub, nullptr);
 }
 
 TEST_F(OutputModeTest, DynamicParameterDescriptorAccepted)
