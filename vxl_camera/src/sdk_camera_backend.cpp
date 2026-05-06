@@ -158,14 +158,13 @@ public:
     }
     pipeline_->setFrameQueueSize(config.frame_queue_size);
 
-    if (config.color_enabled) {
-      // Format::Any lets the SDK pick the device's native profile (e.g. MJPEG
-      // on VXL615) instead of failing when no Profile{BGR, w, h, fps} exists.
-      // We convert to BGR in the framesetCallback before publishing so ROS
-      // consumers still get sensor_msgs::Image with bgr8 encoding.
-      pipeline_->enableStream(vxl::SensorType::Color, vxl::Format::Any,
-        config.color_width, config.color_height, config.color_fps);
-    }
+    // Stream enable order matters: Depth/IR (Y16) MUST be enabled before Color
+    // (MJPEG). The vxlsdk Pipeline starts streams in enable order, and on
+    // VXL6X5 the device firmware needs to settle into NIR_DEPTH stream mode
+    // (set as a side effect of the first Y16 stream open) before MJPEG bulk
+    // transfer will deliver frames. If Color is started first, MJPEG stream
+    // gets STREAMON'd before the device is in the right mode and produces zero
+    // frames in concurrent dual-stream operation.
     if (config.depth_enabled) {
       pipeline_->enableStream(vxl::SensorType::Depth, vxl::Format::Z16,
         config.depth_width, config.depth_height, config.depth_fps);
@@ -173,6 +172,14 @@ public:
     if (config.ir_enabled) {
       pipeline_->enableStream(vxl::SensorType::IR, vxl::Format::Gray16,
         config.ir_width, config.ir_height, config.ir_fps);
+    }
+    if (config.color_enabled) {
+      // Format::Any lets the SDK pick the device's native profile (e.g. MJPEG
+      // on VXL615) instead of failing when no Profile{BGR, w, h, fps} exists.
+      // We convert to BGR in the framesetCallback before publishing so ROS
+      // consumers still get sensor_msgs::Image with bgr8 encoding.
+      pipeline_->enableStream(vxl::SensorType::Color, vxl::Format::Any,
+        config.color_width, config.color_height, config.color_fps);
     }
 
     pipeline_->start();
