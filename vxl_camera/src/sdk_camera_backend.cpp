@@ -46,6 +46,7 @@ public:
 
   bool open(const std::string & serial) override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (serial.empty()) {
       if (context_->deviceCount() == 0) {return false;}
       device_ = context_->getDevice(0);
@@ -59,12 +60,13 @@ public:
 
   void close() override
   {
-    stopStreaming();
+    stopStreaming();  // joins poll_thread; must happen before sdk_mutex_ acquire
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (device_ && device_->isOpen()) {device_->close();}
     device_.reset();
     // Drop cached calibration — a different device may be opened next.
     {
-      std::lock_guard<std::mutex> lk(calib_mutex_);
+      std::lock_guard<std::mutex> clk(calib_mutex_);
       depth_intrin_cache_.reset();
       color_intrin_cache_.reset();
       depth_to_color_ext_cache_.reset();
@@ -74,23 +76,27 @@ public:
 
   bool isOpen() const override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     return device_ && device_->isOpen();
   }
 
   vxl::DeviceInfo getDeviceInfo() const override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (!device_) {throw std::runtime_error("device not open");}
     return device_->getInfo();
   }
 
   void hwReset() override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (!device_) {throw std::runtime_error("device not open");}
     device_->hwReset();
   }
 
   std::optional<vxl::Intrinsics> getIntrinsics(vxl::SensorType s) const override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (!device_) {return std::nullopt;}
     try {
       return device_->getIntrinsics(s);
@@ -102,6 +108,7 @@ public:
   std::optional<vxl::Extrinsics> getExtrinsics(
     vxl::SensorType from, vxl::SensorType to) const override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (!device_) {return std::nullopt;}
     try {
       return device_->getExtrinsics(from, to);
@@ -112,6 +119,7 @@ public:
 
   bool isOptionSupported(vxl::SensorType s, vxl_option_t o) const override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (!device_) {return false;}
     try {
       auto sensor = device_->getSensor(s);
@@ -123,18 +131,21 @@ public:
 
   vxl_option_range_t getOptionRange(vxl::SensorType s, vxl_option_t o) const override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     auto sensor = device_->getSensor(s);
     return sensor->getOptionRange(o);
   }
 
   float getOption(vxl::SensorType s, vxl_option_t o) const override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     auto sensor = device_->getSensor(s);
     return sensor->getOption(o);
   }
 
   void setOption(vxl::SensorType s, vxl_option_t o, float v) override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     auto sensor = device_->getSensor(s);
     sensor->setOption(o, v);
   }
@@ -142,52 +153,57 @@ public:
   void startStreaming(
     const BackendStreamConfig & config, BackendFrameSetCallback cb) override
   {
-    if (running_.load()) {return;}
-    if (!device_) {throw std::runtime_error("device not open");}
-    callback_ = std::move(cb);
+    {
+      std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
+      if (running_.load()) {return;}
+      if (!device_) {throw std::runtime_error("device not open");}
+      callback_ = std::move(cb);
 
-    pipeline_ = std::make_unique<vxl::Pipeline>(device_);
+      pipeline_ = std::make_unique<vxl::Pipeline>(device_);
 
-    // Sync mode
-    if (config.sync_mode == "strict") {
-      pipeline_->setSyncMode(vxl::SyncMode::Strict);
-    } else if (config.sync_mode == "approximate") {
-      pipeline_->setSyncMode(vxl::SyncMode::Approximate);
-    } else {
-      pipeline_->setSyncMode(vxl::SyncMode::None);
-    }
-    pipeline_->setFrameQueueSize(config.frame_queue_size);
+      // Sync mode
+      if (config.sync_mode == "strict") {
+        pipeline_->setSyncMode(vxl::SyncMode::Strict);
+      } else if (config.sync_mode == "approximate") {
+        pipeline_->setSyncMode(vxl::SyncMode::Approximate);
+      } else {
+        pipeline_->setSyncMode(vxl::SyncMode::None);
+      }
+      pipeline_->setFrameQueueSize(config.frame_queue_size);
 
-    // Stream enable order matters: Depth/IR (Y16) MUST be enabled before Color
-    // (MJPEG). The vxlsdk Pipeline starts streams in enable order, and on
-    // VXL6X5 the device firmware needs to settle into NIR_DEPTH stream mode
-    // (set as a side effect of the first Y16 stream open) before MJPEG bulk
-    // transfer will deliver frames. If Color is started first, MJPEG stream
-    // gets STREAMON'd before the device is in the right mode and produces zero
-    // frames in concurrent dual-stream operation.
-    if (config.depth_enabled) {
-      pipeline_->enableStream(vxl::SensorType::Depth, vxl::Format::Z16,
-        config.depth_width, config.depth_height, config.depth_fps);
-    }
-    if (config.ir_enabled) {
-      pipeline_->enableStream(vxl::SensorType::IR, vxl::Format::Gray16,
-        config.ir_width, config.ir_height, config.ir_fps);
-    }
-    if (config.color_enabled) {
-      // Format::Any lets the SDK pick the device's native profile (e.g. MJPEG
-      // on VXL615) instead of failing when no Profile{BGR, w, h, fps} exists.
-      // We convert to BGR in the framesetCallback before publishing so ROS
-      // consumers still get sensor_msgs::Image with bgr8 encoding.
-      pipeline_->enableStream(vxl::SensorType::Color, vxl::Format::Any,
-        config.color_width, config.color_height, config.color_fps);
-    }
+      // Stream enable order matters: Depth/IR (Y16) MUST be enabled before Color
+      // (MJPEG). The vxlsdk Pipeline starts streams in enable order, and on
+      // VXL6X5 the device firmware needs to settle into NIR_DEPTH stream mode
+      // (set as a side effect of the first Y16 stream open) before MJPEG bulk
+      // transfer will deliver frames. If Color is started first, MJPEG stream
+      // gets STREAMON'd before the device is in the right mode and produces zero
+      // frames in concurrent dual-stream operation.
+      if (config.depth_enabled) {
+        pipeline_->enableStream(vxl::SensorType::Depth, vxl::Format::Z16,
+          config.depth_width, config.depth_height, config.depth_fps);
+      }
+      if (config.ir_enabled) {
+        pipeline_->enableStream(vxl::SensorType::IR, vxl::Format::Gray16,
+          config.ir_width, config.ir_height, config.ir_fps);
+      }
+      if (config.color_enabled) {
+        // Format::Any lets the SDK pick the device's native profile (e.g. MJPEG
+        // on VXL615) instead of failing when no Profile{BGR, w, h, fps} exists.
+        // We convert to BGR in the framesetCallback before publishing so ROS
+        // consumers still get sensor_msgs::Image with bgr8 encoding.
+        pipeline_->enableStream(vxl::SensorType::Color, vxl::Format::Any,
+          config.color_width, config.color_height, config.color_fps);
+      }
 
-    pipeline_->start();
-    running_.store(true);
+      pipeline_->start();
+      running_.store(true);
+    }  // release sdk_mutex_ before spawning poll_thread
+
     try {
       poll_thread_ = std::thread([this]() {pollLoop();});
     } catch (...) {
       running_.store(false);
+      std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
       pipeline_->stop();
       pipeline_.reset();
       throw;
@@ -196,8 +212,13 @@ public:
 
   void stopStreaming() override
   {
+    // Signal stop, then wait for poll_thread WITHOUT holding sdk_mutex_ —
+    // poll_thread acquires sdk_mutex_ for frame processing; if we held it
+    // here we'd deadlock waiting for the thread to drain its current loop.
     running_.store(false);
     if (poll_thread_.joinable()) {poll_thread_.join();}
+
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (pipeline_ && pipeline_->isRunning()) {pipeline_->stop();}
     pipeline_.reset();
     callback_ = nullptr;
@@ -210,12 +231,17 @@ public:
 
   void setDeviceEventCallback(BackendDeviceEventCallback cb) override
   {
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (!context_) {return;}
     if (!cb) {
       context_->setDeviceEventCallback(nullptr);
       return;
     }
-    // Wrap in a stable lambda; the SDK keeps a copy.
+    // Wrap in a stable lambda; the SDK keeps a copy. The lambda is invoked
+    // from the SDK's hotplug event thread — it must NOT call back into SDK
+    // (or it would race against the user-thread's sdk_mutex_-protected
+    // calls). We just forward to the user callback which is expected to do
+    // its own locking / queueing.
     context_->setDeviceEventCallback(
       [cb = std::move(cb)](const vxl::DeviceInfo & info, bool added) {cb(info, added);});
   }
@@ -231,6 +257,9 @@ public:
 
     // Device-side options on the depth sensor (silently no-op if the connected
     // device doesn't expose them, e.g. VXL435 ignores VXL6X5_OPTION_*).
+    // Acquire sdk_mutex_ here even though isOptionSupported / setOption
+    // re-acquire it (recursive_mutex allows nested acquisition by same thread).
+    std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (!device_) {return;}
     auto trySet = [this](vxl_option_t opt, float val) {
         try {
@@ -264,9 +293,31 @@ private:
   void pollLoop()
   {
     while (running_.load()) {
+      // -------- Phase 1: blocking wait for next frameset (NO sdk_mutex_) ----
+      //
+      // Pipeline.waitForFrameSet uses Pipeline's internal frame_mutex/cv to
+      // pop from the per-stream queues; it does NOT touch the USB device.
+      // Holding sdk_mutex_ across the (up to 100ms) wait would block any
+      // user-thread SDK call needlessly. The actual USB I/O happens in the
+      // backend's own worker thread (also under SDK control), independent
+      // of sdk_mutex_ — see feedback memory "vxlsdk 当线程不安全设备用".
+      vxl::FrameSetPtr frameset;
       try {
-        auto frameset = pipeline_->waitForFrameSet(100);
-        if (!frameset || frameset->empty() || !callback_) {continue;}
+        frameset = pipeline_->waitForFrameSet(100);
+      } catch (const vxl::Error &) {
+        continue;
+      }
+      if (!frameset || frameset->empty() || !callback_) {continue;}
+
+      // -------- Phase 2: process frames under sdk_mutex_ -------------------
+      //
+      // Frame->format/convert/data/etc. ARE direct SDK calls and must be
+      // serialized against any other user-thread SDK access (open/close,
+      // setOption, getIntrinsics, etc.). Hold sdk_mutex_ for the entire
+      // processing block, including copyFrame and computeAlignedDepth.
+      BackendFrameSetPtr bs;
+      {
+        std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
 
         // Apply host-side filter chain to depth frame, if configured.
         // The pipeline is rebuilt on setFilterChain() so we just need a
@@ -275,7 +326,7 @@ private:
         // we only ever apply it from this single poll thread).
         std::shared_ptr<vxl::FilterPipeline> filters;
         {
-          std::lock_guard<std::mutex> lk(filter_mutex_);
+          std::lock_guard<std::mutex> flk(filter_mutex_);
           filters = filter_pipeline_;
         }
 
@@ -317,15 +368,21 @@ private:
           aligned_depth = computeAlignedDepth(final_depth, align_scale_.load());
         }
 
-        auto bs = std::make_shared<BackendFrameSet>();
+        bs = std::make_shared<BackendFrameSet>();
         bs->color = copyFrame(color_frame);
         bs->depth = copyFrame(final_depth);
         bs->ir = copyFrame(frameset->getIRFrame());
         bs->aligned_depth = copyFrame(aligned_depth);
-        callback_(bs);
-      } catch (const vxl::Error &) {
-        // Timeout or transient error — keep polling.
-      }
+      }  // release sdk_mutex_ before invoking user callback
+
+      // -------- Phase 3: user callback (NO sdk_mutex_) ---------------------
+      //
+      // The user callback may be slow (ROS publisher serialization, downstream
+      // subscribers) and may itself want to call SDK methods (e.g. setOption
+      // in response to a frame); releasing the lock here avoids deadlocks and
+      // doesn't risk SDK state since bs already contains owned copies of the
+      // frame data.
+      callback_(bs);
     }
   }
 
@@ -431,6 +488,22 @@ private:
 
     return pipe->empty() ? nullptr : pipe;
   }
+
+  // Serializes ALL direct SDK API calls (context_/device_/pipeline_/sensor/
+  // stream/frame methods, vxl_dip_*) on this backend instance.
+  //
+  // The vxlsdk is a thread-unsafe device state machine — callers must
+  // serialize. The backend may have multiple threads touching the SDK
+  // concurrently otherwise: the user thread (lifecycle on_*, dynamic
+  // parameter callbacks calling setOption), the poll_thread_ (frame
+  // processing), the SDK's own backend worker threads (frame production —
+  // those are inside SDK and don't go through this mutex; they call OUR
+  // callback which we route via Pipeline → poll_thread_).
+  //
+  // recursive_mutex so internal helpers (e.g. setFilterChain calling
+  // isOptionSupported / setOption, both of which acquire) don't deadlock.
+  // See feedback memory "vxlsdk 当线程不安全设备用".
+  mutable std::recursive_mutex sdk_mutex_;
 
   vxl::ContextPtr context_;
   vxl::DevicePtr device_;
