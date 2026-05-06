@@ -22,9 +22,14 @@ namespace vxl_camera
 namespace
 {
 
-// Convert an SDK frame to a self-contained BackendFrame. Copies the pixel
-// buffer so the BackendFrame can outlive the SDK frame.
-BackendFramePtr copyFrame(const vxl::FramePtr & frame)
+// Wrap an SDK frame as a BackendFrame WITHOUT copying the pixel buffer.
+// The vxl::FramePtr is kept alive in BackendFrame::borrowed; downstream
+// readers access pixels via BackendFrame::data() which forwards to
+// frame->data(). The single unavoidable copy happens later in
+// buildImageMsg, when we copy into sensor_msgs::Image::data (a vector that
+// DDS owns). v4l2 mmap → SDK is also a copy but the SDK does that itself
+// to escape the kernel buffer-recycle window.
+BackendFramePtr wrapFrame(const vxl::FramePtr & frame)
 {
   if (!frame || !frame->isValid()) {return nullptr;}
   auto bf = std::make_shared<BackendFrame>();
@@ -32,9 +37,7 @@ BackendFramePtr copyFrame(const vxl::FramePtr & frame)
   bf->height = frame->height();
   bf->stride = frame->stride();
   bf->format = frame->format();
-  size_t n = frame->dataSize();
-  bf->data.resize(n);
-  std::memcpy(bf->data.data(), frame->data(), n);
+  bf->borrowed = frame;  // keep-alive; data() reads through to SDK buffer
   auto m = frame->metadata();
   bf->timestamp_us = m.timestamp_us;
   bf->sequence = m.sequence;
@@ -174,7 +177,7 @@ public:
   //   L1: SDK backend worker thread (one per physical USB stream) →
   //       stream callback writes the latest FramePtr into our slot (O(1)).
   //   L2: publish_thread waits on cv, snapshots all slots, runs heavy work
-  //       (MJPEG→BGR convert, filter chain, depth-to-color align, copyFrame),
+  //       (MJPEG→BGR convert, filter chain, depth-to-color align, wrapFrame),
   //       invokes user callback (BackendFrameSet ready).
   //   L3: ROS publish (in user callback context — outside sdk_mutex_).
   //
@@ -489,7 +492,7 @@ private:
   // publish_thread main loop
   //
   // Wait on cv → snapshot slots → decide emit (per sync_mode_) → process
-  // (convert/filter/align/copyFrame under sdk_mutex_) → user callback
+  // (convert/filter/align/wrapFrame under sdk_mutex_) → user callback
   // (outside sdk_mutex_).
   //
   // The 100ms timeout on cv.wait_for ensures we wake even if no callback
@@ -623,10 +626,10 @@ private:
       }
 
       auto bs = std::make_shared<BackendFrameSet>();
-      bs->color         = copyFrame(f_c);
-      bs->depth         = copyFrame(final_depth);
-      bs->ir            = copyFrame(f_i);
-      bs->aligned_depth = copyFrame(aligned);
+      bs->color         = wrapFrame(f_c);
+      bs->depth         = wrapFrame(final_depth);
+      bs->ir            = wrapFrame(f_i);
+      bs->aligned_depth = wrapFrame(aligned);
 
       // User callback runs OUTSIDE sdk_mutex_:
       //   - frees the SDK for parallel option queries from main thread

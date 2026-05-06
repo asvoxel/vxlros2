@@ -85,6 +85,22 @@ VxlCameraLifecycleNode::on_activate(const State & /*previous*/)
     if (depth_meta_pub_) {depth_meta_pub_->on_activate();}
     if (ir_meta_pub_) {ir_meta_pub_->on_activate();}
     if (connection_state_pub_) {connection_state_pub_->on_activate();}
+    if (diag_pub_) {diag_pub_->on_activate();}
+
+    // Diagnostics 1Hz timer — created (re)freshly on every activate so a
+    // cleanup → reconfigure cycle gets a fresh timer too.
+    diag_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() {
+        if (!diag_pub_ || !diag_pub_->is_activated()) {return;}
+        DiagnosticInputs in;
+        in.backend = backend_.get();
+        in.color = (color_pub_) ? &color_diag_ : nullptr;
+        in.depth = (depth_pub_) ? &depth_diag_ : nullptr;
+        in.ir    = (ir_pub_)    ? &ir_diag_    : nullptr;
+        in.output_mode = get_parameter("output_mode").as_string();
+        in.sync_mode = get_parameter("sync_mode").as_string();
+        in.device_present = device_present_.load();
+        diag_pub_->publish(buildDiagnosticArray(in, now()));
+      });
 
     // Latched extrinsics: republish now that the publisher is active.
     if (extrinsics_pub_) {
@@ -138,6 +154,8 @@ VxlCameraLifecycleNode::on_deactivate(const State & /*previous*/)
   if (depth_meta_pub_) {depth_meta_pub_->on_deactivate();}
   if (ir_meta_pub_) {ir_meta_pub_->on_deactivate();}
   if (connection_state_pub_) {connection_state_pub_->on_deactivate();}
+  if (diag_pub_) {diag_pub_->on_deactivate();}
+  diag_timer_.reset();
 
   publishConnectionState();
   return CallbackReturn::SUCCESS;
@@ -166,6 +184,8 @@ VxlCameraLifecycleNode::on_cleanup(const State & /*previous*/)
   depth_meta_pub_.reset();
   ir_meta_pub_.reset();
   connection_state_pub_.reset();
+  diag_pub_.reset();
+  diag_timer_.reset();
   device_info_srv_.reset();
   get_option_srv_.reset();
   set_option_srv_.reset();
@@ -267,18 +287,21 @@ void VxlCameraLifecycleNode::buildPublishers()
     output_mode_ == OutputMode::All);
   bool need_ir = (output_mode_ == OutputMode::IR || output_mode_ == OutputMode::All);
 
-  if (output_mode_ == OutputMode::RGBD) {
+  // Topology rule (v0.3.0): per-stream image_raw + camera_info ALWAYS
+  // advertised when the stream is enabled. Composite ~/rgbd published when
+  // both color + depth flow AND publish_rgbd_composite is true.
+  const bool publish_composite = need_color && need_depth &&
+    get_parameter("publish_rgbd_composite").as_bool();
+  if (publish_composite) {
     rgbd_pub_ = create_publisher<vxl_camera_msgs::msg::RGBD>("~/rgbd", qos);
   }
 
-  // Split Image + CameraInfo so each is a true LifecyclePublisher.
-  // (image_transport::CameraPublisher takes rclcpp::Node*, not LifecycleNode.)
-  if (need_color && output_mode_ != OutputMode::RGBD) {
+  if (need_color) {
     color_pub_ = create_publisher<sensor_msgs::msg::Image>("~/color/image_raw", qos);
     color_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
       "~/color/camera_info", qos);
   }
-  if (need_depth && output_mode_ != OutputMode::RGBD) {
+  if (need_depth) {
     depth_pub_ = create_publisher<sensor_msgs::msg::Image>("~/depth/image_raw", qos);
     depth_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
       "~/depth/camera_info", qos);
@@ -326,6 +349,11 @@ void VxlCameraLifecycleNode::buildPublishers()
 
   connection_state_pub_ = create_publisher<std_msgs::msg::String>(
     "~/connection_state", rclcpp::QoS(1).transient_local());
+
+  // Diagnostics publisher — 1 Hz timer is created in on_activate so it
+  // doesn't tick while the node is INACTIVE.
+  diag_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+    "~/diagnostics", rclcpp::QoS(1));
 
   // Push initial filter chain to backend (default: all off → no-op).
   backend_->setFilterChain(readFilterChainParams(*this));
@@ -421,62 +449,25 @@ void VxlCameraLifecycleNode::framesetCallback(BackendFrameSetPtr frameset)
   auto depth_frame = frameset->depth;
   auto ir_frame = frameset->ir;
 
-  switch (output_mode_) {
-    case OutputMode::RGBD:
-      if (color_frame && depth_frame) {
-        publishRGBD(color_frame, depth_frame);
-        color_stats_.frames_published++;
-        depth_stats_.frames_published++;
-      }
-      break;
-    case OutputMode::RGBDepth:
-      if (color_frame) {
-        publishImage(color_pub_, color_info_pub_, color_frame, tf_prefix_ + "vxl_color_optical_frame",
-          color_camera_info_);
-        color_stats_.frames_published++;
-      }
-      if (depth_frame) {
-        publishImage(depth_pub_, depth_info_pub_, depth_frame, tf_prefix_ + "vxl_depth_optical_frame",
-          depth_camera_info_);
-        depth_stats_.frames_published++;
-      }
-      break;
-    case OutputMode::ColorOnly:
-      if (color_frame) {
-        publishImage(color_pub_, color_info_pub_, color_frame, tf_prefix_ + "vxl_color_optical_frame",
-          color_camera_info_);
-        color_stats_.frames_published++;
-      }
-      break;
-    case OutputMode::DepthOnly:
-      if (depth_frame) {
-        publishImage(depth_pub_, depth_info_pub_, depth_frame, tf_prefix_ + "vxl_depth_optical_frame",
-          depth_camera_info_);
-        depth_stats_.frames_published++;
-      }
-      break;
-    case OutputMode::IR:
-      if (ir_frame) {
-        publishImage(ir_pub_, ir_info_pub_, ir_frame, tf_prefix_ + "vxl_ir_optical_frame", nullptr);
-        ir_stats_.frames_published++;
-      }
-      break;
-    case OutputMode::All:
-      if (color_frame) {
-        publishImage(color_pub_, color_info_pub_, color_frame, tf_prefix_ + "vxl_color_optical_frame",
-          color_camera_info_);
-        color_stats_.frames_published++;
-      }
-      if (depth_frame) {
-        publishImage(depth_pub_, depth_info_pub_, depth_frame, tf_prefix_ + "vxl_depth_optical_frame",
-          depth_camera_info_);
-        depth_stats_.frames_published++;
-      }
-      if (ir_frame) {
-        publishImage(ir_pub_, ir_info_pub_, ir_frame, tf_prefix_ + "vxl_ir_optical_frame", nullptr);
-        ir_stats_.frames_published++;
-      }
-      break;
+  // Topology: per-stream publish runs whenever the publisher exists (and is
+  // active). RGBD composite is additional, gated on rgbd_pub_ being created.
+  if (color_frame && color_pub_) {
+    publishImage(color_pub_, color_info_pub_, color_frame,
+      tf_prefix_ + "vxl_color_optical_frame", color_camera_info_);
+    color_diag_.total_frames.fetch_add(1, std::memory_order_relaxed); color_diag_.last_publish_ns.store(now().nanoseconds(), std::memory_order_relaxed);
+  }
+  if (depth_frame && depth_pub_) {
+    publishImage(depth_pub_, depth_info_pub_, depth_frame,
+      tf_prefix_ + "vxl_depth_optical_frame", depth_camera_info_);
+    depth_diag_.total_frames.fetch_add(1, std::memory_order_relaxed); depth_diag_.last_publish_ns.store(now().nanoseconds(), std::memory_order_relaxed);
+  }
+  if (ir_frame && ir_pub_) {
+    publishImage(ir_pub_, ir_info_pub_, ir_frame,
+      tf_prefix_ + "vxl_ir_optical_frame", nullptr);
+    ir_diag_.total_frames.fetch_add(1, std::memory_order_relaxed); ir_diag_.last_publish_ns.store(now().nanoseconds(), std::memory_order_relaxed);
+  }
+  if (color_frame && depth_frame && rgbd_pub_ && rgbd_pub_->is_activated()) {
+    publishRGBD(color_frame, depth_frame);
   }
 
   if (color_frame) {

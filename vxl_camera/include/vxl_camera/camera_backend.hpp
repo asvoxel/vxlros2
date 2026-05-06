@@ -19,22 +19,52 @@
 namespace vxl_camera
 {
 
-// Self-contained frame: owns its data buffer plus the SDK metadata fields.
-// We don't expose vxl::FramePtr through the interface so mock tests don't
-// need to construct SDK frames.
+// Self-contained frame: holds metadata + a pointer to the pixel buffer.
+//
+// Pixel data is held EITHER as an owned std::vector (mock backend, tests,
+// host-side converted frames) OR borrowed via a vxl::FramePtr keep-alive
+// (SDK backend hot path). The split avoids the redundant SDK→BackendFrame
+// memcpy in publishLoop:
+//
+//   v4l2 mmap → SDK Frame    [memcpy ① — kernel buffer recycle, unavoidable]
+//   SDK Frame → BackendFrame [reference, no copy — was a memcpy in v0.2.0]
+//   BackendFrame → ROS Image [memcpy ② — vector ownership for DDS]
+//
+// Callers must use data() / dataSize() / isValid() — never poke `borrowed`
+// or `owned` directly.
 struct BackendFrame {
   uint32_t width = 0;
   uint32_t height = 0;
   uint32_t stride = 0;
   vxl::Format format = vxl::Format::Unknown;
-  std::vector<uint8_t> data;
   // Frame metadata (mirrors vxl_frame_metadata_t)
   uint64_t timestamp_us = 0;
   uint32_t sequence = 0;
   uint32_t exposure_us = 0;
   uint16_t gain = 0;
 
-  bool isValid() const {return !data.empty();}
+  // Pixel buffer — exactly one of these is populated. SDK backend sets
+  // `borrowed` (no copy); mock / converted frames set `owned`.
+  vxl::FramePtr borrowed;
+  std::vector<uint8_t> owned;
+
+  // Unified read accessors — always use these, not the underlying members.
+  // SDK's frame->data() returns const void*; we cast to uint8_t* since pixel
+  // pointers are byte-addressable for memcpy purposes.
+  const uint8_t * data() const noexcept
+  {
+    return borrowed ?
+      static_cast<const uint8_t *>(borrowed->data()) :
+      owned.data();
+  }
+  size_t dataSize() const noexcept
+  {
+    return borrowed ? borrowed->dataSize() : owned.size();
+  }
+  bool isValid() const noexcept
+  {
+    return data() != nullptr && dataSize() > 0;
+  }
 };
 
 using BackendFramePtr = std::shared_ptr<BackendFrame>;

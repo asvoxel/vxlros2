@@ -78,6 +78,27 @@ sensor_msgs::msg::PointCloud2::UniquePtr PointCloudGenerator::generate(
     }
   }
 
+  // Depth pixel decoder. Two encodings are supported:
+  //   - 16UC1 / mono16: uint16_t in millimeters (× depth_scale_ → mm).
+  //                     Default for VXL435 / VXL6X5 / VXL605.
+  //   - 32FC1:          float in meters (depth_scale_ ignored).
+  // Anything else is rejected (returns nullptr).
+  enum class DepthFmt { U16, F32, Unsupported };
+  DepthFmt dfmt = DepthFmt::Unsupported;
+  if (depth.encoding == "16UC1" || depth.encoding == "mono16") {
+    dfmt = DepthFmt::U16;
+    if (depth.data.size() < static_cast<size_t>(depth.width) * depth.height * 2) {
+      return nullptr;
+    }
+  } else if (depth.encoding == "32FC1") {
+    dfmt = DepthFmt::F32;
+    if (depth.data.size() < static_cast<size_t>(depth.width) * depth.height * 4) {
+      return nullptr;
+    }
+  } else {
+    return nullptr;
+  }
+
   uint32_t out_w = (depth.width + f.decimation - 1) / f.decimation;
   uint32_t out_h = (depth.height + f.decimation - 1) / f.decimation;
 
@@ -110,8 +131,26 @@ sensor_msgs::msg::PointCloud2::UniquePtr PointCloudGenerator::generate(
     modifier.setPointCloud2FieldsByString(1, "xyz");
   }
 
-  const uint16_t * depth_data = reinterpret_cast<const uint16_t *>(depth.data.data());
+  const uint16_t * depth_u16 = (dfmt == DepthFmt::U16) ?
+    reinterpret_cast<const uint16_t *>(depth.data.data()) : nullptr;
+  const float * depth_f32 = (dfmt == DepthFmt::F32) ?
+    reinterpret_cast<const float *>(depth.data.data()) : nullptr;
   const uint8_t * color_data = has_color ? color->data.data() : nullptr;
+
+  // Per-pixel depth fetch, in meters. depth_scale_ is the raw→mm factor for
+  // U16 pixels (1.0 for VXL435, 8.0 for VXL6X5, 16.0 for VXL605); F32 pixels
+  // are already in meters.
+  auto pixel_z_m = [&](uint32_t v, uint32_t u) -> float {
+      const size_t idx = v * depth.width + u;
+      if (dfmt == DepthFmt::U16) {
+        uint16_t raw = depth_u16[idx];
+        if (raw == 0) {return 0.0f;}
+        return static_cast<float>(raw) * depth_scale_ / 1000.0f;
+      }
+      // F32
+      float z = depth_f32[idx];
+      return std::isfinite(z) ? z : 0.0f;
+    };
 
   const float inv_fx = 1.0f / fx_;
   const float inv_fy = 1.0f / fy_;
@@ -129,9 +168,8 @@ sensor_msgs::msg::PointCloud2::UniquePtr PointCloudGenerator::generate(
 
     for (uint32_t v = 0; v < depth.height; v += f.decimation) {
       for (uint32_t u = 0; u < depth.width; u += f.decimation) {
-        uint16_t d = depth_data[v * depth.width + u];
-        float z = static_cast<float>(d) * depth_scale_ / 1000.0f;
-        bool keep = (d != 0) &&
+        float z = pixel_z_m(v, u);
+        bool keep = (z > 0.0f) &&
           (min_z <= 0.0f || z >= min_z) &&
           (max_z <= 0.0f || z <= max_z);
         if (keep) {
@@ -167,9 +205,8 @@ sensor_msgs::msg::PointCloud2::UniquePtr PointCloudGenerator::generate(
     size_t kept = 0;
     for (uint32_t v = 0; v < depth.height; v += f.decimation) {
       for (uint32_t u = 0; u < depth.width; u += f.decimation) {
-        uint16_t d = depth_data[v * depth.width + u];
-        if (d == 0) {continue;}
-        float z = static_cast<float>(d) * depth_scale_ / 1000.0f;
+        float z = pixel_z_m(v, u);
+        if (z <= 0.0f) {continue;}
         if ((min_z > 0.0f && z < min_z) || (max_z > 0.0f && z > max_z)) {continue;}
         *jx = (static_cast<float>(u) - cx_) * z * inv_fx;
         *jy = (static_cast<float>(v) - cy_) * z * inv_fy;

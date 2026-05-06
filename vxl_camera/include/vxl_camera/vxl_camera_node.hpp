@@ -1,6 +1,7 @@
 #ifndef VXL_CAMERA__VXL_CAMERA_NODE_HPP_
 #define VXL_CAMERA__VXL_CAMERA_NODE_HPP_
 
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
@@ -17,6 +18,7 @@
 #include <vxl_camera_msgs/srv/set_int32.hpp>
 
 #include "vxl_camera/camera_backend.hpp"
+#include "vxl_camera/node_helpers.hpp"
 #include "vxl_camera/point_cloud_generator.hpp"
 #include "vxl_camera/frame_utils.hpp"
 
@@ -135,13 +137,12 @@ private:
   // Parameter callback handle
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 
-  // Per-stream frame counters
-  struct StreamStats {
-    std::atomic<uint64_t> frames_published{0};
-  };
-  StreamStats color_stats_;
-  StreamStats depth_stats_;
-  StreamStats ir_stats_;
+  // Per-stream frame counters (used by ~/diagnostics 1Hz publisher).
+  StreamDiagCounters color_diag_;
+  StreamDiagCounters depth_diag_;
+  StreamDiagCounters ir_diag_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diag_pub_;
+  rclcpp::TimerBase::SharedPtr diag_timer_;
 };
 
 }  // namespace vxl_camera

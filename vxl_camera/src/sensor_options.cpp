@@ -45,6 +45,7 @@ const std::set<std::string> & coldParameters()
     "depth.width", "depth.height", "depth.fps",
     "ir.width", "ir.height", "ir.fps",
     "sync_mode", "frame_queue_size", "inter_stream_start_delay_ms",
+    "publish_rgbd_composite",
     "tf_prefix", "publish_tf",
     "point_cloud.enabled",
   };

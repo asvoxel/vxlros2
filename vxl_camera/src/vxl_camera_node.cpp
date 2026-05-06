@@ -112,19 +112,25 @@ void VxlCameraNode::setupPublishers()
   bool need_ir = (output_mode_ == OutputMode::IR ||
     output_mode_ == OutputMode::All);
 
-  if (output_mode_ == OutputMode::RGBD) {
+  // Topology rule (v0.3.0): per-stream image_raw + camera_info topics are
+  // ALWAYS advertised when the corresponding stream is enabled, regardless
+  // of output_mode. The composite ~/rgbd message is additionally published
+  // when both color + depth flow AND publish_rgbd_composite is true.
+  // This makes downstream launch / RViz config independent of output_mode
+  // (no more "the topic exists in ~rgb+depth mode but not in rgbd mode").
+  const bool publish_composite = need_color && need_depth &&
+    get_parameter("publish_rgbd_composite").as_bool();
+  if (publish_composite) {
     rgbd_pub_ = create_publisher<vxl_camera_msgs::msg::RGBD>("~/rgbd", qos);
   }
 
-  // Raw Image + CameraInfo publishers (consistent with lifecycle node + enables
-  // intra-process zero-copy when publishing via std::move).
-  if (need_color && output_mode_ != OutputMode::RGBD) {
+  if (need_color) {
     color_pub_ = create_publisher<sensor_msgs::msg::Image>("~/color/image_raw", qos);
     color_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
       "~/color/camera_info", qos);
   }
 
-  if (need_depth && output_mode_ != OutputMode::RGBD) {
+  if (need_depth) {
     depth_pub_ = create_publisher<sensor_msgs::msg::Image>("~/depth/image_raw", qos);
     depth_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
       "~/depth/camera_info", qos);
@@ -184,6 +190,22 @@ void VxlCameraNode::setupPublishers()
 
   extrinsics_pub_ = create_publisher<vxl_camera_msgs::msg::Extrinsics>(
     "~/extrinsics/depth_to_color", rclcpp::QoS(1).transient_local());
+
+  // Diagnostics: standard /diagnostics-style topic, 1 Hz. Compatible with
+  // rqt_robot_monitor and any DiagnosticArray consumer.
+  diag_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+    "~/diagnostics", rclcpp::QoS(1));
+  diag_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() {
+    DiagnosticInputs in;
+    in.backend = backend_.get();
+    in.color = (color_pub_) ? &color_diag_ : nullptr;
+    in.depth = (depth_pub_) ? &depth_diag_ : nullptr;
+    in.ir    = (ir_pub_)    ? &ir_diag_    : nullptr;
+    in.output_mode = get_parameter("output_mode").as_string();
+    in.sync_mode = get_parameter("sync_mode").as_string();
+    in.device_present = backend_->isOpen();
+    diag_pub_->publish(buildDiagnosticArray(in, now()));
+  });
 
   // Push initial filter chain to backend (default: all off → no-op).
   backend_->setFilterChain(readFilterChainParams(*this));
@@ -250,32 +272,24 @@ void VxlCameraNode::framesetCallback(BackendFrameSetPtr frameset)
   auto depth_frame = frameset->depth;
   auto ir_frame = frameset->ir;
 
-  switch (output_mode_) {
-    case OutputMode::RGBD:
-      if (color_frame && depth_frame) {
-        publishRGBD(color_frame, depth_frame);
-        color_stats_.frames_published++;
-        depth_stats_.frames_published++;
-      }
-      break;
-    case OutputMode::RGBDepth:
-      if (color_frame) {publishColor(color_frame); color_stats_.frames_published++;}
-      if (depth_frame) {publishDepth(depth_frame); depth_stats_.frames_published++;}
-      break;
-    case OutputMode::ColorOnly:
-      if (color_frame) {publishColor(color_frame); color_stats_.frames_published++;}
-      break;
-    case OutputMode::DepthOnly:
-      if (depth_frame) {publishDepth(depth_frame); depth_stats_.frames_published++;}
-      break;
-    case OutputMode::IR:
-      if (ir_frame) {publishIR(ir_frame); ir_stats_.frames_published++;}
-      break;
-    case OutputMode::All:
-      if (color_frame) {publishColor(color_frame); color_stats_.frames_published++;}
-      if (depth_frame) {publishDepth(depth_frame); depth_stats_.frames_published++;}
-      if (ir_frame) {publishIR(ir_frame); ir_stats_.frames_published++;}
-      break;
+  // Per-stream publish runs whenever the publisher exists (which only
+  // happens when the corresponding stream is enabled — see setupPublishers).
+  // RGBD composite is gated on rgbd_pub_ being non-null (created when
+  // publish_rgbd_composite=true and both streams are flowing).
+  if (color_frame && color_pub_) {
+    publishColor(color_frame);
+    color_diag_.total_frames.fetch_add(1, std::memory_order_relaxed); color_diag_.last_publish_ns.store(now().nanoseconds(), std::memory_order_relaxed);
+  }
+  if (depth_frame && depth_pub_) {
+    publishDepth(depth_frame);
+    depth_diag_.total_frames.fetch_add(1, std::memory_order_relaxed); depth_diag_.last_publish_ns.store(now().nanoseconds(), std::memory_order_relaxed);
+  }
+  if (ir_frame && ir_pub_) {
+    publishIR(ir_frame);
+    ir_diag_.total_frames.fetch_add(1, std::memory_order_relaxed); ir_diag_.last_publish_ns.store(now().nanoseconds(), std::memory_order_relaxed);
+  }
+  if (color_frame && depth_frame && rgbd_pub_) {
+    publishRGBD(color_frame, depth_frame);
   }
 
   // Per-stream metadata

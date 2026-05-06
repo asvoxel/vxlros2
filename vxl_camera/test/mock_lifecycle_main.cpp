@@ -36,7 +36,7 @@ BackendFramePtr makeFakeFrame(uint32_t w, uint32_t h, vxl::Format fmt, uint32_t 
     (fmt == vxl::Format::Z16 || fmt == vxl::Format::Gray16) ? 2 :
     (fmt == vxl::Format::BGR || fmt == vxl::Format::RGB) ? 3 : 1;
   f->stride = static_cast<uint32_t>(w * bpp);
-  f->data.assign(f->stride * h, 0);
+  f->owned.assign(f->stride * h, 0);
   f->sequence = seq;
   f->timestamp_us = static_cast<uint64_t>(
     std::chrono::duration_cast<std::chrono::microseconds>(

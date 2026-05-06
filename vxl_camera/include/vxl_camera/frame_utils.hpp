@@ -19,9 +19,29 @@ namespace vxl_camera
 // rclcpp::Time. Uses RCL_ROS_TIME so downstream TF / sync / sensor fusion
 // can mix this with `now()` from other nodes without clock-source clashes.
 //
-// The SDK timestamp is monotonic per-device; if the device clock is not
-// wall-clock-aligned (typical for USB cameras), the value still uniquely
-// orders frames within a single session — which is what TF lookups need.
+// IMPORTANT — timestamp semantics, single device:
+//   * MONOTONIC. The SDK guarantees the value strictly increases per
+//     successful frame within one open() session.
+//   * SUB-FRAME PRECISION. Captures the exposure midpoint to ~10us
+//     accuracy on VXL6X5 / VXL435.
+//   * NOT WALL-CLOCK ALIGNED. The "device epoch" is whatever the firmware
+//     latched at power-up — typically nanoseconds since SoC boot. TF
+//     lookups WITHIN a single device's frames work; comparing to system
+//     time / GPS / NTP does NOT without an external offset.
+//
+// IMPORTANT — multi-device / multi-camera:
+//   * NOT COMPARABLE across devices. Two cameras' timestamps live in
+//     different epochs. For multi-camera fusion the user MUST establish
+//     a per-device offset (e.g. `t_corrected = t_device + offset`) by
+//     observing one synchronization event per pair, OR drive both
+//     cameras off a hardware sync trigger and treat the trigger pulse
+//     as t=0 in user code.
+//
+// IMPORTANT — bag recording:
+//   * `ros2 bag record` time-aligns by header.stamp. With device-epoch
+//     stamps, recordings will look "shifted" relative to wall clock —
+//     this is correct and expected. To force wall-clock recording set
+//     ROS parameter `timestamp_source = ros_time` (TODO future).
 inline rclcpp::Time toRosTimeFromHardware(uint64_t timestamp_us)
 {
   // rclcpp::Time(int64 nanoseconds, clock_type)

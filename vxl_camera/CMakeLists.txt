@@ -15,6 +15,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 # image_transport / camera_info_manager dropped: both nodes now use raw
 # Publisher<Image> + Publisher<CameraInfo> for two reasons —
 #   1. image_transport doesn't support LifecycleNode in Humble; the lifecycle
@@ -161,6 +162,7 @@ ament_target_dependencies(vxl_camera_component
   sensor_msgs
   std_srvs
   std_msgs
+  diagnostic_msgs
   tf2_ros
   tf2
   geometry_msgs

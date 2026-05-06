@@ -8,6 +8,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <std_srvs/srv/trigger.hpp>
@@ -20,6 +21,7 @@
 #include <vxl_camera_msgs/srv/set_int32.hpp>
 
 #include "vxl_camera/camera_backend.hpp"
+#include "vxl_camera/node_helpers.hpp"
 #include "vxl_camera/point_cloud_generator.hpp"
 #include "vxl_camera/frame_utils.hpp"
 
@@ -176,13 +178,13 @@ private:
   // Parameter callback
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 
-  // Per-stream frame counters
-  struct StreamStats {
-    std::atomic<uint64_t> frames_published{0};
-  };
-  StreamStats color_stats_;
-  StreamStats depth_stats_;
-  StreamStats ir_stats_;
+  // Per-stream frame counters (used by ~/diagnostics 1Hz publisher).
+  StreamDiagCounters color_diag_;
+  StreamDiagCounters depth_diag_;
+  StreamDiagCounters ir_diag_;
+  std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<diagnostic_msgs::msg::DiagnosticArray>>
+    diag_pub_;
+  rclcpp::TimerBase::SharedPtr diag_timer_;
 
   // Hotplug
   std::atomic<bool> device_present_{false};

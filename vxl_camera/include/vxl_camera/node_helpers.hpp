@@ -20,6 +20,7 @@
 #include "vxl_camera/point_cloud_generator.hpp"
 #include "vxl_camera/sensor_options.hpp"
 
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -30,6 +31,8 @@
 #include <vxl_camera_msgs/srv/get_device_info.hpp>
 #include <vxl_camera_msgs/srv/get_int32.hpp>
 #include <vxl_camera_msgs/srv/set_int32.hpp>
+
+#include <atomic>
 
 #include <algorithm>
 #include <memory>
@@ -97,6 +100,13 @@ void declareAllParameters(NodeT & node)
   // 0 disables (only safe on hardware you've verified doesn't drop frames
   // on back-to-back STREAMONs).
   node.declare_parameter("inter_stream_start_delay_ms", 1000);
+  // RGBD composite message: when both color and depth streams are enabled,
+  // the driver always advertises ~/color/image_raw + ~/depth/image_raw
+  // (uniform topology across output_modes). Set true to ALSO publish the
+  // composite ~/rgbd message — useful for downstream nodes that want a
+  // single sync'd payload. Default true so output_mode=rgbd users see
+  // ~/rgbd as before.
+  node.declare_parameter("publish_rgbd_composite", true);
   node.declare_parameter("tf_prefix", "");
   node.declare_parameter("publish_tf", true);
 }
@@ -239,6 +249,44 @@ void buildRGBDMsg(
 bool buildExtrinsicsMsg(
   ICameraBackend & backend,
   vxl_camera_msgs::msg::Extrinsics & out);
+
+// ─── Diagnostics ─────────────────────────────────────────────────────────────
+
+// Per-stream counters that the framesetCallback bumps, and the diagnostic
+// timer reads. Lock-free. Reset on stop/start.
+struct StreamDiagCounters {
+  std::atomic<uint64_t> total_frames{0};
+  std::atomic<uint64_t> last_publish_ns{0};   // RCL_ROS_TIME at last publish
+};
+
+// Snapshot data the diagnostic timer reads atomically — no extra mutex
+// because the timer fires on the executor thread that owns the node.
+struct DiagnosticInputs {
+  // Backend reference (for getDeviceInfo + isStreaming queries).
+  ICameraBackend * backend = nullptr;
+  // Per-stream counters; nullptr if the stream isn't enabled.
+  StreamDiagCounters * color = nullptr;
+  StreamDiagCounters * depth = nullptr;
+  StreamDiagCounters * ir = nullptr;
+  // Cached config strings (rebuilt on parameter change isn't worth it).
+  std::string output_mode;
+  std::string sync_mode;
+  bool device_present = true;
+};
+
+// Build a DiagnosticArray summarising current driver state. Each enabled
+// stream gets a DiagnosticStatus reporting frame count + age (now - last
+// publish stamp). The "vxl_camera/device" task reports serial / firmware /
+// streaming state.
+//
+// Status mapping (per stream):
+//   OK       — frame received in last 2s
+//   WARN     — last frame 2-10s ago
+//   STALE    — last frame >10s ago (or never received since startup)
+//   ERROR    — backend reports !isStreaming and stream was enabled
+diagnostic_msgs::msg::DiagnosticArray buildDiagnosticArray(
+  const DiagnosticInputs & in,
+  rclcpp::Time stamp);
 
 // ─── Parameter-change side effects ───────────────────────────────────────────
 
