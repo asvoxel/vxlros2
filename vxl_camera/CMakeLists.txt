@@ -15,8 +15,14 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
-find_package(image_transport REQUIRED)
-find_package(camera_info_manager REQUIRED)
+# image_transport / camera_info_manager dropped: both nodes now use raw
+# Publisher<Image> + Publisher<CameraInfo> for two reasons —
+#   1. image_transport doesn't support LifecycleNode in Humble; the lifecycle
+#      node had to use raw publishers, leaving non-lifecycle on a different
+#      topology (extra compressed/theora siblings) — confusing for users.
+#   2. image_transport::CameraPublisher::publish takes (const Image&, …);
+#      no UniquePtr overload, blocking intra-process zero-copy.
+# Users who need compressed transport can run a republisher node downstream.
 find_package(tf2_ros REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -134,6 +140,7 @@ set(NODE_SOURCES
   src/frame_utils.cpp
   src/filter_chain.cpp
   src/point_cloud_generator.cpp
+  src/node_helpers.cpp
 )
 
 add_library(vxl_camera_component SHARED ${NODE_SOURCES})
@@ -154,8 +161,6 @@ ament_target_dependencies(vxl_camera_component
   sensor_msgs
   std_srvs
   std_msgs
-  image_transport
-  camera_info_manager
   tf2_ros
   tf2
   geometry_msgs

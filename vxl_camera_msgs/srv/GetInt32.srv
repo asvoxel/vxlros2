@@ -1,3 +1,8 @@
+# Sensor selector: "color" | "depth" | "ir". Required — replaces the prior
+# heuristic of routing by integer option id (option_id >= 100 => depth) which
+# silently misrouted any new option whose value happened to fall in either range.
+string sensor
+# Numeric vxl_option_t value as a string (e.g. "1" for VXL_OPTION_EXPOSURE).
 string option_name
 ---
 int32 value

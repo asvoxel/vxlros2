@@ -71,6 +71,9 @@ public:
   {
     stopStreaming();  // joins publish_thread; must happen before sdk_mutex_ acquire
     std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
+    sensor_color_cached_.reset();
+    sensor_depth_cached_.reset();
+    sensor_ir_cached_.reset();
     if (device_ && device_->isOpen()) {device_->close();}
     device_.reset();
     {
@@ -138,7 +141,7 @@ public:
     std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
     if (!device_) {return false;}
     try {
-      auto sensor = device_->getSensor(s);
+      auto sensor = sensorForLocked(s);
       return sensor && sensor->isOptionSupported(o);
     } catch (const vxl::Error &) {
       return false;
@@ -148,22 +151,19 @@ public:
   vxl_option_range_t getOptionRange(vxl::SensorType s, vxl_option_t o) const override
   {
     std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
-    auto sensor = device_->getSensor(s);
-    return sensor->getOptionRange(o);
+    return sensorForLocked(s)->getOptionRange(o);
   }
 
   float getOption(vxl::SensorType s, vxl_option_t o) const override
   {
     std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
-    auto sensor = device_->getSensor(s);
-    return sensor->getOption(o);
+    return sensorForLocked(s)->getOption(o);
   }
 
   void setOption(vxl::SensorType s, vxl_option_t o, float v) override
   {
     std::lock_guard<std::recursive_mutex> lk(sdk_mutex_);
-    auto sensor = device_->getSensor(s);
-    sensor->setOption(o, v);
+    sensorForLocked(s)->setOption(o, v);
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -234,22 +234,19 @@ public:
 
         running_.store(true);
 
-        // Start streams in the same Depth→IR→Color order, with a settle
-        // delay between successive stream->start() calls.
-        //
-        // Empirically: the SDK v4l2 backend's per-stream STREAMON ioctl
-        // submits isoch (Y16) and bulk (MJPEG) URBs into kernel uvcvideo;
-        // back-to-back STREAMONs without a settle delay leave the second
-        // stream with kernel buffers that never fill (DQBUF returns nothing).
-        // dst in our matrix tests uses sleep(1) between stream_starts and
-        // gets 102+173 frames; sdk_camera_backend without a settle gets
-        // 0+0. 200ms is enough on the hardware we tested.
+        // Start streams in Depth→IR→Color order, with a settle delay between
+        // successive stream->start() calls (configurable via
+        // BackendStreamConfig::inter_stream_start_delay_ms; defaults to 1000ms
+        // to match the SDK's `dst` reference program on physical Linux. See
+        // the field comment for the empirical rationale.)
+        const auto settle_ms =
+          std::chrono::milliseconds(config.inter_stream_start_delay_ms);
         auto start_with_settle =
-          [](vxl::StreamPtr & s, auto cb, bool more_to_start) {
+          [settle_ms](vxl::StreamPtr & s, auto cb, bool more_to_start) {
             if (!s) {return;}
             s->start(std::move(cb));
-            if (more_to_start) {
-              std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            if (more_to_start && settle_ms.count() > 0) {
+              std::this_thread::sleep_for(settle_ms);
             }
           };
 
@@ -369,6 +366,23 @@ public:
   }
 
 private:
+  // Sensor handle cache. Populated lazily; cleared on close(). Avoids
+  // device_->getSensor() round-trip on every option call from the executor.
+  // Caller must hold sdk_mutex_.
+  vxl::SensorPtr sensorForLocked(vxl::SensorType s) const
+  {
+    auto & slot = const_cast<vxl::SensorPtr &>(
+      s == vxl::SensorType::Color ? sensor_color_cached_ :
+      s == vxl::SensorType::Depth ? sensor_depth_cached_ :
+      sensor_ir_cached_);
+    if (!slot) {
+      if (!device_) {throw std::runtime_error("device not open");}
+      slot = device_->getSensor(s);
+      if (!slot) {throw std::runtime_error("sensor not available");}
+    }
+    return slot;
+  }
+
   // ──────────────────────────────────────────────────────────────────────────
   // Internal: per-stream slot
   //
@@ -407,8 +421,15 @@ private:
 
   // Hot path — runs on SDK backend worker thread. Keep this tiny: write the
   // latest pointer + notify the publish thread. NO heavy work, NO sdk_mutex_.
+  //
+  // For "no ROS frames" diagnostics, increment a per-kind atomic counter that
+  // can be polled via the diagnostic API or read in a debugger; do NOT log
+  // per-frame at INFO/WARN — that floods stderr at 30+ fps. The counter is
+  // exposed via debugFrameCounter() for the lifecycle node's connection_state
+  // / future diagnostics topic.
   void onStreamFrame(SlotKind kind, vxl::FramePtr frame)
   {
+    sdk_frame_counters_[static_cast<int>(kind)].fetch_add(1, std::memory_order_relaxed);
     if (!frame || !frame->isValid()) {return;}
     auto ts = frame->metadata().timestamp_us;
     StreamSlot & s = slotFor(kind);
@@ -541,56 +562,71 @@ private:
       consumeFresh(slot_ir_,    fresh_i);
       consumeFresh(slot_color_, fresh_c);
 
-      // Process frames + assemble BackendFrameSet under sdk_mutex_.
-      // sdk_mutex_ guards SDK API access (frame->format/convert,
-      // filter pipeline process, vxl_dip_align_depth_to_rgb).
-      BackendFrameSetPtr bs;
-      {
-        std::lock_guard<std::recursive_mutex> sdk_lk(sdk_mutex_);
+      // Process frames OUTSIDE sdk_mutex_.
+      //
+      // Earlier this whole block was inside sdk_mutex_ on the theory that any
+      // SDK call must be serialized. In practice MJPEG convert (10–30 ms at
+      // 1080p), filter pipeline, vxl_dip_align_depth_to_rgb, and the 3 copies
+      // can all run while the main thread answers `setOption` requests — they
+      // operate on already-snapshotted FramePtr buffers, not on shared device
+      // state. publish_thread is the only thread doing frame processing, so
+      // the operations are naturally serialized; sdk_mutex_ adds no safety
+      // and just blocks the executor.
+      //
+      // Two narrow exceptions still take sdk_mutex_:
+      //   - computeAlignedDepth's first call may fill the calibration cache
+      //     (calls device_->getIntrinsics) — that path acquires sdk_mutex_
+      //     internally.
+      //   - SDK frame->convert if a future SDK release routes through the
+      //     device handle. Currently convert is frame-local (per vxl_frame.c).
 
-        // Color: MJPEG/YUYV → BGR if needed (ROS image_raw expects bgr8 etc.)
-        if (f_c && f_c->isValid()) {
-          auto fmt = f_c->format();
-          if (fmt != vxl::Format::BGR && fmt != vxl::Format::RGB &&
-            fmt != vxl::Format::Gray8 && fmt != vxl::Format::Gray16)
-          {
-            try {
-              auto converted = f_c->convert(vxl::Format::BGR);
-              if (converted && converted->isValid()) {f_c = converted;}
-            } catch (const vxl::Error &) {
-              f_c.reset();  // drop the unconvertible color frame
-            }
+      // Color: convert to a ROS-publishable encoding if needed. The SDK's
+      // vxl::Frame::convert supports YUYV/UYVY → RGB|BGR and MJPEG → RGB
+      // (not → BGR). Target RGB so MJPEG and YUYV sources both end up at
+      // encoding="rgb8" which ROS / cv_bridge / OpenCV all handle natively.
+      if (f_c && f_c->isValid()) {
+        auto fmt = f_c->format();
+        if (fmt != vxl::Format::RGB && fmt != vxl::Format::BGR &&
+          fmt != vxl::Format::Gray8 && fmt != vxl::Format::Gray16)
+        {
+          try {
+            auto converted = f_c->convert(vxl::Format::RGB);
+            if (converted && converted->isValid()) {f_c = converted;}
+          } catch (const vxl::Error &) {
+            f_c.reset();  // drop the unconvertible color frame
           }
         }
+      }
 
-        // Depth: optional host-side filter chain.
-        std::shared_ptr<vxl::FilterPipeline> filters;
-        {
-          std::lock_guard<std::mutex> flk(filter_mutex_);
-          filters = filter_pipeline_;
-        }
-        vxl::FramePtr final_depth = f_d;
-        if (filters && !filters->empty() && f_d && f_d->isValid()) {
-          try {
-            auto out = filters->process(f_d);
-            if (out) {final_depth = out;}
-          } catch (const vxl::Error &) {/* fall back to raw */}
-        }
+      // Depth: optional host-side filter chain.
+      std::shared_ptr<vxl::FilterPipeline> filters;
+      {
+        std::lock_guard<std::mutex> flk(filter_mutex_);
+        filters = filter_pipeline_;
+      }
+      vxl::FramePtr final_depth = f_d;
+      if (filters && !filters->empty() && f_d && f_d->isValid()) {
+        try {
+          auto out = filters->process(f_d);
+          if (out) {final_depth = out;}
+        } catch (const vxl::Error &) {/* fall back to raw */}
+      }
 
-        // Optional depth-to-color alignment.
-        vxl::FramePtr aligned;
-        if (align_enabled_.load() && final_depth && f_c &&
-          final_depth->isValid() && f_c->isValid())
-        {
-          aligned = computeAlignedDepth(final_depth, align_scale_.load());
-        }
+      // Optional depth-to-color alignment. computeAlignedDepth handles its
+      // own (narrow) lock around the calibration-cache fill; the actual
+      // vxl_dip_align_depth_to_rgb call runs unlocked.
+      vxl::FramePtr aligned;
+      if (align_enabled_.load() && final_depth && f_c &&
+        final_depth->isValid() && f_c->isValid())
+      {
+        aligned = computeAlignedDepth(final_depth, align_scale_.load());
+      }
 
-        bs = std::make_shared<BackendFrameSet>();
-        bs->color         = copyFrame(f_c);
-        bs->depth         = copyFrame(final_depth);
-        bs->ir            = copyFrame(f_i);
-        bs->aligned_depth = copyFrame(aligned);
-      }  // release sdk_mutex_ before user callback
+      auto bs = std::make_shared<BackendFrameSet>();
+      bs->color         = copyFrame(f_c);
+      bs->depth         = copyFrame(final_depth);
+      bs->ir            = copyFrame(f_i);
+      bs->aligned_depth = copyFrame(aligned);
 
       // User callback runs OUTSIDE sdk_mutex_:
       //   - frees the SDK for parallel option queries from main thread
@@ -628,13 +664,21 @@ private:
     return c;
   }
 
-  // Caller must hold sdk_mutex_ (we call device_->getIntrinsics for cache fill).
+  // Self-contained: takes sdk_mutex_ briefly only for the calibration-cache
+  // fill on first call; the actual vxl_dip_align_depth_to_rgb runs unlocked
+  // so concurrent setOption / sensor queries from the executor aren't blocked.
   vxl::FramePtr computeAlignedDepth(const vxl::FramePtr & depth, float scale)
   {
-    if (!device_) {return nullptr;}
+    // Snapshot calibration (cached after first fill) under calib_mutex_.
+    vxl_intrinsics_t di{}, ci{};
+    vxl_extrinsics_t ext{};
     {
       std::lock_guard<std::mutex> lk(calib_mutex_);
       if (!depth_intrin_cache_) {
+        // Cache miss: pull from device. This is the only spot that needs
+        // sdk_mutex_ on the alignment hot path; upgrade to it briefly.
+        std::lock_guard<std::recursive_mutex> sdk_lk(sdk_mutex_);
+        if (!device_) {return nullptr;}
         try {
           depth_intrin_cache_ = device_->getIntrinsics(vxl::SensorType::Depth);
           color_intrin_cache_ = device_->getIntrinsics(vxl::SensorType::Color);
@@ -644,10 +688,10 @@ private:
           return nullptr;
         }
       }
+      di  = toCIntrinsics(*depth_intrin_cache_);
+      ci  = toCIntrinsics(*color_intrin_cache_);
+      ext = toCExtrinsics(*depth_to_color_ext_cache_);
     }
-    vxl_intrinsics_t di  = toCIntrinsics(*depth_intrin_cache_);
-    vxl_intrinsics_t ci  = toCIntrinsics(*color_intrin_cache_);
-    vxl_extrinsics_t ext = toCExtrinsics(*depth_to_color_ext_cache_);
     vxl_frame_t * out = nullptr;
     auto err = vxl_dip_align_depth_to_rgb(depth->handle(), &di, &ci, &ext, scale, &out);
     if (err != VXL_SUCCESS || !out) {return nullptr;}
@@ -723,6 +767,15 @@ private:
   vxl::StreamPtr stream_ir_;
   vxl::StreamPtr stream_color_;
 
+  // Sensor handle cache for the option hot path (executor thread). Populated
+  // lazily by sensorForLocked() and cleared in close(). Distinct from the
+  // streaming sensor_*_ which are populated by openStreamAndStore — the cache
+  // is used even when no stream is active (e.g. read exposure from a paused
+  // device).
+  mutable vxl::SensorPtr sensor_color_cached_;
+  mutable vxl::SensorPtr sensor_depth_cached_;
+  mutable vxl::SensorPtr sensor_ir_cached_;
+
   // User callback + run state.
   BackendFrameSetCallback callback_;
   std::atomic<bool> running_{false};
@@ -731,6 +784,11 @@ private:
   StreamSlot slot_depth_;
   StreamSlot slot_ir_;
   StreamSlot slot_color_;
+
+  // SDK→backend frame arrival counters (Depth=0, IR=1, Color=2). Polled by
+  // diagnostics; was previously a per-frame fprintf which spammed stderr at 30 Hz.
+  // For ad-hoc debugging, attach a debugger or expose via a future diagnostics topic.
+  std::atomic<uint64_t> sdk_frame_counters_[3]{};
 
   // Which streams must contribute to a BackendFrameSet emission.
   std::atomic<bool> need_depth_{false};

@@ -29,6 +29,14 @@ const std::map<std::string, OptionBinding> & dynamicOptionTable()
   return table;
 }
 
+std::optional<vxl::SensorType> parseSensorSelector(std::string_view s)
+{
+  if (s == "color")  {return vxl::SensorType::Color;}
+  if (s == "depth")  {return vxl::SensorType::Depth;}
+  if (s == "ir")     {return vxl::SensorType::IR;}
+  return std::nullopt;
+}
+
 const std::set<std::string> & coldParameters()
 {
   static const std::set<std::string> cold = {
@@ -36,7 +44,7 @@ const std::set<std::string> & coldParameters()
     "color.width", "color.height", "color.fps",
     "depth.width", "depth.height", "depth.fps",
     "ir.width", "ir.height", "ir.fps",
-    "sync_mode", "frame_queue_size",
+    "sync_mode", "frame_queue_size", "inter_stream_start_delay_ms",
     "tf_prefix", "publish_tf",
     "point_cloud.enabled",
   };

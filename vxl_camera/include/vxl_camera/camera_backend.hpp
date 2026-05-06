@@ -64,6 +64,14 @@ struct BackendStreamConfig {
   uint32_t ir_width = 640,     ir_height = 480,    ir_fps = 30;
   std::string sync_mode = "strict";  // strict | approximate | none
   size_t frame_queue_size = 4;
+  // Settle delay between successive stream start() calls. The SDK v4l2
+  // backend's per-stream STREAMON ioctl submits isoch (Y16) and bulk (MJPEG)
+  // URBs into kernel uvcvideo; back-to-back STREAMONs without a settle delay
+  // leave the second stream's callback never firing on some hosts (notably
+  // VM USB-passthrough). 1000 ms is what the SDK's `dst` reference program
+  // uses on physical Linux; 200 ms tends to suffice. Set to 0 to disable
+  // (only safe on hardware you've verified single-shot).
+  uint32_t inter_stream_start_delay_ms = 1000;
 };
 
 // All SDK touchpoints the nodes need. Each method that talks to the device

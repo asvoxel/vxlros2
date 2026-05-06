@@ -5,8 +5,10 @@
 #include <vxl.hpp>
 
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace vxl_camera
@@ -24,6 +26,11 @@ const std::map<std::string, OptionBinding> & dynamicOptionTable();
 // Parameters that are declared at startup and CANNOT be changed at runtime.
 // Setting one of these via `ros2 param set` will be rejected with a clear reason.
 const std::set<std::string> & coldParameters();
+
+// Parse a sensor selector string ("color" | "depth" | "ir") to vxl::SensorType.
+// Replaces the prior heuristic that routed by option id range (>=100 → depth)
+// which silently misrouted any new option whose id happened to overlap.
+std::optional<vxl::SensorType> parseSensorSelector(std::string_view s);
 
 // Result of an option dependency check on a proposed parameter batch.
 // `ok == false` means the batch must be rejected; `reason` is the message

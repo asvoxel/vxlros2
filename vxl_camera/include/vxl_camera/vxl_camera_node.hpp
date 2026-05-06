@@ -6,8 +6,6 @@
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/string.hpp>
-#include <image_transport/image_transport.hpp>
-#include <camera_info_manager/camera_info_manager.hpp>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <std_srvs/srv/trigger.hpp>
 
@@ -43,7 +41,6 @@ public:
 private:
   // Initialization
   void declareParameters();
-  void declareDynamicOptions();
   void initDevice();
   void setupPublishers();
   void setupServices();
@@ -63,9 +60,9 @@ private:
     const std::string & frame_id);
 
   // Helpers
-  // Non-const because RCLCPP_*_THROTTLE inside requires a mutable Clock
-  // (Node::get_clock() const returns ConstSharedPtr).
-  sensor_msgs::msg::Image::SharedPtr frameToImageMsg(
+  // Returns UniquePtr so callers can std::move into publish for intra-process
+  // zero-copy. Non-const because RCLCPP_*_THROTTLE requires a mutable Clock.
+  sensor_msgs::msg::Image::UniquePtr frameToImageMsg(
     const BackendFramePtr & frame,
     const std::string & frame_id);
   void publishStaticTFs();
@@ -97,11 +94,24 @@ private:
   std::string tf_prefix_;
   bool publish_tf_;
 
-  // Publishers
-  image_transport::CameraPublisher color_pub_;
-  image_transport::CameraPublisher depth_pub_;
-  image_transport::CameraPublisher ir_pub_;
-  image_transport::CameraPublisher aligned_depth_pub_;
+  // Publishers — raw rclcpp::Publisher (not image_transport) so:
+  //   1. Both VxlCameraNode and VxlCameraLifecycleNode advertise the same
+  //      topic structure (image_transport doesn't support LifecycleNode in
+  //      Humble, so the lifecycle node already had to use raw publishers;
+  //      unifying gets rid of the per-variant downstream subscriber wart).
+  //   2. Publishing via std::move(unique_ptr) enables intra-process zero-copy
+  //      for composable subscribers in the same container — image_transport's
+  //      publish(const Image&, ...) signature blocked that path.
+  //   Tradeoff: lose image_transport's compressed/theora plugins. Users who
+  //   need them can run a republisher node downstream.
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr color_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr color_info_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr depth_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr depth_info_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr ir_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr ir_info_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr aligned_depth_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr aligned_depth_info_pub_;
   rclcpp::Publisher<vxl_camera_msgs::msg::RGBD>::SharedPtr rgbd_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub_;
   rclcpp::Publisher<vxl_camera_msgs::msg::Extrinsics>::SharedPtr extrinsics_pub_;

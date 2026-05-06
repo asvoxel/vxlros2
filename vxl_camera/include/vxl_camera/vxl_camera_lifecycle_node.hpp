@@ -9,7 +9,6 @@
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/string.hpp>
-#include <image_transport/image_transport.hpp>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <std_srvs/srv/trigger.hpp>
 
@@ -98,10 +97,9 @@ private:
     const BackendFramePtr & frame,
     const std::string & frame_id);
 
-  // Helpers
-  // Non-const because RCLCPP_*_THROTTLE inside requires a mutable Clock
-  // (LifecycleNode::get_clock() const returns ConstSharedPtr).
-  sensor_msgs::msg::Image::SharedPtr frameToImageMsg(
+  // Helpers — UniquePtr to enable std::move-into-publish for intra-process
+  // zero-copy. Non-const because RCLCPP_*_THROTTLE requires a mutable Clock.
+  sensor_msgs::msg::Image::UniquePtr frameToImageMsg(
     const BackendFramePtr & frame, const std::string & frame_id);
 
   // Hotplug
@@ -191,6 +189,12 @@ private:
   std::atomic<bool> auto_recover_{true};       // re-activate after reconnect
   std::atomic<bool> was_active_before_disconnect_{false};
   rclcpp::TimerBase::SharedPtr monitor_timer_;
+  // Exponential backoff for failed reopens — prevents the 1Hz monitor from
+  // spamming the SDK and log when a USB device stays gone. Doubles up to
+  // kMaxReopenBackoffSec, resets on successful open.
+  std::chrono::steady_clock::time_point next_reopen_attempt_{};
+  std::chrono::seconds reopen_backoff_{1};
+  static constexpr std::chrono::seconds kMaxReopenBackoffSec{10};
 };
 
 }  // namespace vxl_camera

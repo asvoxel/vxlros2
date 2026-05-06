@@ -160,13 +160,11 @@ TEST_F(NodeWithMockTest, GetDeviceInfoServiceReturnsBackendData)
   EXPECT_EQ(res->device_info.firmware_version, "0.0.1");
 }
 
-TEST_F(NodeWithMockTest, SetOptionServiceRoutesByIdRange)
+TEST_F(NodeWithMockTest, SetOptionServiceRoutesBySensorField)
 {
   auto mock = makeMockWithDevice();
-  // Register a depth option (id >= 100 → routes to Depth sensor)
   mock->setSupportedOption(vxl::SensorType::Depth, VXL_OPTION_MIN_DISTANCE,
     {0, 10000, 1, 100});
-  // And a color option (id < 100 → routes to Color sensor)
   mock->setSupportedOption(vxl::SensorType::Color, VXL_OPTION_EXPOSURE,
     {1, 10000, 1, 5000});
 
@@ -175,25 +173,38 @@ TEST_F(NodeWithMockTest, SetOptionServiceRoutesByIdRange)
   auto client = node->create_client<vxl_camera_msgs::srv::SetInt32>("~/set_option");
   ASSERT_TRUE(client->wait_for_service(2s));
 
-  // Set color exposure (option id 1)
+  // Color exposure: explicit sensor=color
   {
     auto req = std::make_shared<vxl_camera_msgs::srv::SetInt32::Request>();
-    req->option_name = "1";
+    req->sensor = "color";
+    req->option_name = std::to_string(static_cast<int>(VXL_OPTION_EXPOSURE));
     req->value = 8888;
     auto fut = client->async_send_request(req);
     ASSERT_EQ(rclcpp::spin_until_future_complete(node, fut, 2s),
       rclcpp::FutureReturnCode::SUCCESS);
     EXPECT_TRUE(fut.get()->success);
   }
-  // Set depth min_distance (option id 101 → depth sensor)
+  // Depth min_distance: explicit sensor=depth
   {
     auto req = std::make_shared<vxl_camera_msgs::srv::SetInt32::Request>();
-    req->option_name = "101";
+    req->sensor = "depth";
+    req->option_name = std::to_string(static_cast<int>(VXL_OPTION_MIN_DISTANCE));
     req->value = 250;
     auto fut = client->async_send_request(req);
     ASSERT_EQ(rclcpp::spin_until_future_complete(node, fut, 2s),
       rclcpp::FutureReturnCode::SUCCESS);
     EXPECT_TRUE(fut.get()->success);
+  }
+  // Bad sensor name: rejected with clear message
+  {
+    auto req = std::make_shared<vxl_camera_msgs::srv::SetInt32::Request>();
+    req->sensor = "frobnicator";
+    req->option_name = "1";
+    req->value = 0;
+    auto fut = client->async_send_request(req);
+    ASSERT_EQ(rclcpp::spin_until_future_complete(node, fut, 2s),
+      rclcpp::FutureReturnCode::SUCCESS);
+    EXPECT_FALSE(fut.get()->success);
   }
 
   auto calls = mock->calls_setOption();
