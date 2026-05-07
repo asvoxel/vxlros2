@@ -1,6 +1,6 @@
 # VxlROS2 中文文档
 
-[ASVXL](https://github.com/asvoxel/vxlsdk-rel) (VXL435 / VXL6X5) 深度相机的 ROS2 驱动。
+[ASVXL](https://github.com/asvoxel/vxlsense-sdk) (VXL435 / VXL6X5) 深度相机的 ROS2 驱动。
 
 > English: [../README.md](../README.md)
 
@@ -16,7 +16,7 @@
 ## 环境要求
 
 - ROS2 Humble 或更高版本
-- ASVXL SDK ([下载](https://github.com/asvoxel/vxlsdk-rel/releases))
+- ASVXL SDK ([下载](https://github.com/asvoxel/vxlsense-sdk/releases))
 
 ### 安装 ROS2 依赖
 
@@ -48,7 +48,7 @@ cd ../vxlsdk
 
 ```bash
 cd vxlros2/vxlsdk/
-wget https://github.com/asvoxel/vxlsdk-rel/releases/download/vX.Y.Z/asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz
+wget https://github.com/asvoxel/vxlsense-sdk/releases/download/vX.Y.Z/asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz
 tar xzf asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz --strip-components=1
 
 # 验证

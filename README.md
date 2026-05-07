@@ -1,6 +1,6 @@
 # VxlROS2
 
-ROS2 driver for [ASVXL](https://github.com/asvoxel/vxlsdk-rel) (VXL435 / VXL6X5) depth cameras.
+ROS2 driver for [ASVXL](https://github.com/asvoxel/vxlsense-sdk) (VXL435 / VXL6X5) depth cameras.
 
 > Chinese documentation: [docs/README_zh.md](docs/README_zh.md)
 
@@ -26,7 +26,7 @@ ROS2 driver for [ASVXL](https://github.com/asvoxel/vxlsdk-rel) (VXL435 / VXL6X5)
 ## Prerequisites
 
 - ROS2 Humble or later
-- ASVXL SDK ([releases](https://github.com/asvoxel/vxlsdk-rel/releases))
+- ASVXL SDK ([releases](https://github.com/asvoxel/vxlsense-sdk/releases))
 
 ### Install ROS2 Dependencies
 
@@ -58,7 +58,7 @@ cd ../vxlsdk
 
 ```bash
 cd vxlros2/vxlsdk/
-wget https://github.com/asvoxel/vxlsdk-rel/releases/download/vX.Y.Z/asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz
+wget https://github.com/asvoxel/vxlsense-sdk/releases/download/vX.Y.Z/asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz
 tar xzf asvxl-sdk-X.Y.Z-linux-x86_64.tar.gz --strip-components=1
 
 # Verify

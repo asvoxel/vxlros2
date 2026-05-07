@@ -60,4 +60,4 @@ colcon test --packages-select vxl_camera
 
 - 竞品 ROS2 集成: `3rds/{orbbec_ros2, realsense_ros, zed_ros2_wrapper}`
 - ASVXL SDK API: `vxlsdk/include/vxl*.hpp`（或同级项目源码 `../vxlsdk/include/vxl*.hpp`）
-- SDK 发行包: https://github.com/asvoxel/vxlsdk-rel/releases
+- SDK 发行包: https://github.com/asvoxel/vxlsense-sdk/releases

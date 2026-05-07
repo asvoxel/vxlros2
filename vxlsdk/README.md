@@ -55,4 +55,4 @@ vxlsdk/
 └── README.md (this file)
 ```
 
-Releases: https://github.com/asvoxel/vxlsdk-rel/releases
+Releases: https://github.com/asvoxel/vxlsense-sdk/releases
